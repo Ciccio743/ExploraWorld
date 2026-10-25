@@ -1,6 +1,5 @@
 (() => {
 const WORLD_COUNTRIES = 195; // membres de l'ONU + Vatican + Palestine
-const EARTH_R = 6371; // km
 const MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 195];
 const KIND = {
   "Metropolitan department": "départements", "Overseas department": "départements", "Department": "départements",
@@ -30,7 +29,6 @@ const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase
 const cap = s => s[0].toUpperCase() + s.slice(1);
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const fmtPct = p => p === 0 ? "0" : p < .01 ? "<0,01" : (p < 10 ? p.toFixed(2) : p.toFixed(1)).replace(".", ",");
-const fmtInt = n => Math.round(n).toLocaleString("fr-FR");
 const plural = (n, one, many) => n + " " + (n > 1 ? many : one);
 const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T12:00"); return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear(); };
 const monthValue = ts => { if (!ts) return ""; const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
@@ -73,6 +71,13 @@ try {
   if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), plans: cleanPlans(d.plans) };
 } catch (e) {}
 quick = store.get("explora-quick") === "1";
+// les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
+// (une date choisie par l'utilisateur tombe toujours pile à midi)
+if (!store.get("explora-dates-v2")) {
+  for (const [id, t] of state.c) { const d = new Date(t); if (t && (d.getHours() !== 12 || d.getMinutes() || d.getSeconds())) state.c.set(id, 0); }
+  save();
+  store.set("explora-dates-v2", "1");
+}
 
 /* ---------- Chargement ---------- */
 // certains pays trop découpés ont été regroupés en grandes régions : on reporte les anciens marquages
@@ -360,7 +365,7 @@ function tapRegion(r) {
   selected = selected === r.id ? null : r.id;
   update();
 }
-function setRegion(id, on, ts = Date.now()) {
+function setRegion(id, on, ts = 0) {
   const r = regionById.get(id);
   if (!r) return;
   if (on) {
@@ -376,7 +381,14 @@ function toggleRegion(id) {
   const r = regionById.get(id);
   toast(on ? r.properties.n + " ajouté à ta carte ✓" : r.properties.n + " retiré", 1300);
 }
-function setCountry(code, on, ts = Date.now()) {
+// date d'une visite à partir d'un champ mois (« 2024-03 ») ; vide = date inconnue
+function setVisitMonth(code, value) {
+  if (!state.c.has(code)) return;
+  const [y, m] = (value || "").split("-").map(Number);
+  state.c.set(code, y && m ? new Date(y, m - 1, 15, 12).getTime() : 0);
+  save();
+}
+function setCountry(code, on, ts = 0) {
   if (on) { state.c.set(code, state.c.get(code) || ts); state.w.delete(code); }
   else { state.c.delete(code); for (const r of regionsBy.get(code) || []) state.r.delete(r.id); }
   save();
@@ -460,6 +472,7 @@ function renderSheet() {
         <div class="row between"><span>${esc(cap(f.kind))} visit${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
         <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       </div>
+      ${been ? `<label class="when" style="margin-top:10px">Date de visite (facultatif) <input type="month" id="s-date" value="${monthValue(state.c.get(current))}" max="${monthValue(Date.now())}"></label>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? `
       <div class="pick">
@@ -470,6 +483,7 @@ function renderSheet() {
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
     $("s-back").onclick = openWorld;
     $("s-been").onclick = () => { setCountry(current, !been); update(); };
+    if ($("s-date")) $("s-date").onchange = e => setVisitMonth(current, e.target.value);
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
     if (sel) $("s-mark").onclick = () => { toggleRegion(sel.id); update(); };
     if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
@@ -636,7 +650,7 @@ function tripItem(f) {
       </button>
       ${open ? `
       <div class="trip-body">
-        <label class="when">Première visite <input type="month" data-when value="${monthValue(state.c.get(f.id))}" max="${monthValue(Date.now())}"></label>
+        <label class="when">Date de visite (facultatif) <input type="month" data-when value="${monthValue(state.c.get(f.id))}" max="${monthValue(Date.now())}"></label>
         <div class="trip-actions">
           <button class="btn small" data-act="map">Voir sur la carte</button>
           <button class="btn small danger" data-act="remove">Retirer ce pays</button>
@@ -668,12 +682,7 @@ function bindTrip(el) {
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "Retirer ce pays"; } }, 3500);
   };
   const when = el.querySelector("[data-when]");
-  if (when) when.onchange = () => {
-    if (!when.value) return;
-    const [y, m] = when.value.split("-").map(Number);
-    state.c.set(code, new Date(y, m - 1, 15, 12).getTime());
-    save();
-  };
+  if (when) when.onchange = () => setVisitMonth(code, when.value);
   el.querySelectorAll("[data-r]").forEach(cb => cb.onchange = () => {
     setRegion(cb.dataset.r, cb.checked);
     const v = visitedIn(code);
@@ -716,10 +725,11 @@ function renderTrips() {
       <div class="year">${year}</div>
       <ul class="tl">${list.map(([id, t]) => `
         <li><button class="btn small" style="border:0;padding:4px 0" data-open="${id}">${esc(byId.get(id).properties.n)}</button>
-        <span class="small">${t ? MONTHS[new Date(t).getMonth()] : ""}</span></li>`).join("")}
-      </ul>`).join("") + `<p class="small">Change la date d'un voyage dans « Visités », en ouvrant le pays.</p>`
+        <input type="month" class="tl-date" data-tl="${id}" value="${monthValue(t)}" max="${monthValue(Date.now())}" aria-label="Date de visite"></li>`).join("")}
+      </ul>`).join("") + `<p class="small">La date est facultative : touche le mois à côté d'un pays pour la choisir ou la changer.</p>`
       : `<div class="empty-state">Ta frise se remplira avec tes voyages.</div>`;
     box.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { showTab("map"); openCountry(b.dataset.open); });
+    box.querySelectorAll("[data-tl]").forEach(i => i.onchange = () => { setVisitMonth(i.dataset.tl, i.value); renderTrips(); });
   }
 }
 document.querySelectorAll("[data-tv]").forEach(b => b.onclick = () => { tripView = b.dataset.tv; renderTrips(); });
@@ -782,7 +792,7 @@ function renderPlans() {
         setTimeout(() => { if (done.isConnected) { delete done.dataset.armed; done.textContent = "C'est fait ✓"; } }, 4000);
         return;
       }
-      const ts = p.start ? new Date(p.start + "T12:00").getTime() : Date.now();
+      const ts = p.start ? new Date(p.start + "T12:00").getTime() : 0;
       for (const id of p.stops) isCountry(id) ? setCountry(id, true, ts) : setRegion(id, true, ts);
       p.done = true; save(); update();
       toast(`${p.name} : ${plural(p.stops.length, "étape ajoutée", "étapes ajoutées")} à ta carte ✓`, 3000);

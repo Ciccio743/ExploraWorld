@@ -269,3 +269,4 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .city { pointer-events: none; opacity: .72; }
 .city circle { fill: var(--ink-2); }
 .city text { font: 500 10px var(--f-body); fill: var(--ink-2); paint-order: stroke; stroke: var(--fog); stroke-opacity: .7; stroke-width: 2.5px; stroke-linejoin: round; }
+.tl-date { font: inherit; font-size: 13px; color: var(--ink-2); padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); max-width: 150px; }
