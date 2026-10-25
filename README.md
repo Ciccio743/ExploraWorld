@@ -51,4 +51,4 @@ Le service worker passe d'abord par le réseau : l'appli prend toujours la derni
 
 Données cartographiques : [Natural Earth](https://www.naturalearthdata.com) (domaine public). Villes : [GeoNames](https://www.geonames.org) (CC BY 4.0).
 
-À chaque version, augmente le `?v=` des liens vers `css/app.css` et `js/app.js` dans `index.html` pour que les téléphones chargent les nouveaux fichiers.
+À chaque version, augmente le `?v=` des liens vers `css/app.css` et `js/app.js` dans `index.html`, et `DATA_VERSION` dans `js/app.js` quand `data/` change, pour que les téléphones chargent les nouveaux fichiers.

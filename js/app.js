@@ -24,6 +24,9 @@ const OCEAN_ISLANDS = "Seven seas (open ocean)";
 const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
 const $ = id => document.getElementById(id);
+// à augmenter quand les fichiers de data/ changent, pour que les téléphones ne gardent pas l'ancienne version
+const DATA_VERSION = 2;
+const dataUrl = file => "data/" + file + "?v=" + DATA_VERSION;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const cap = s => s[0].toUpperCase() + s.slice(1);
@@ -115,8 +118,8 @@ function kindOf(code) {
 async function load() {
   // carte légère du monde : pays et régions tirés des mêmes contours, donc frontières identiques
   const [world, merged] = await Promise.all([
-    fetch("data/world.json").then(r => r.json()),
-    fetch("data/merged.json").then(r => r.json()).catch(() => ({}))
+    fetch(dataUrl("world.json")).then(r => r.json()),
+    fetch(dataUrl("merged.json")).then(r => r.json()).catch(() => ({}))
   ]);
   migrate(merged);
   countries = topojson.feature(world, world.objects.countries).features;
@@ -145,9 +148,11 @@ async function load() {
 const details = new Map(); // code -> { regions, byId, outline } ou promesse en cours
 function ensureDetail(code) {
   if (details.has(code)) return Promise.resolve(details.get(code));
-  const p = fetch("data/r/" + code + ".json").then(r => r.json()).then(t => {
+  const p = fetch(dataUrl("r/" + code + ".json")).then(r => r.json()).then(t => {
     const obj = t.objects.regions;
     const regions = topojson.feature(t, obj).features;
+    // garde-fou : un détail qui ne correspond pas à la carte légère (ancienne version en cache) est ignoré
+    if (regions.some(r => !regionById.has(r.id))) throw new Error("détail périmé");
     for (const r of regions) { r.detail = true; r.code = code; }
     const d = { regions, byId: new Map(regions.map(r => [r.id, r])), outline: topojson.merge(t, obj.geometries) };
     details.set(code, d);
@@ -268,7 +273,7 @@ function sizeStops() {
 // GeoNames (CC BY 4.0) : villes de plus de 10 000 habitants, triées de la plus peuplée à la moins peuplée
 let cities = [];
 async function loadCities() {
-  const d = await fetch("data/cities.json").then(r => r.json());
+  const d = await fetch(dataUrl("cities.json")).then(r => r.json());
   cities = d.cities.map(([n, lon, lat, pop, ci]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n) }));
   drawCities();
 }
