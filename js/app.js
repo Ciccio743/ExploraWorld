@@ -15,7 +15,7 @@ const SINGULAR = {
   "gouvernorats": "gouvernorat", "émirats": "émirat", "communautés": "communauté", "voïvodies": "voïvodie",
   "paroisses": "paroisse", "îles": "île", "territoires": "territoire", "républiques": "république"
 };
-// types de régions au féminin, pour accorder « explorées », « une région »...
+// types de régions au féminin, pour accorder « visitées », « une région »...
 const FEMININE = new Set(["régions", "provinces", "préfectures", "municipalités", "communautés", "voïvodies", "paroisses", "îles", "républiques"]);
 const CONTINENT = {
   "Europe": "Europe", "Asia": "Asie", "Africa": "Afrique", "North America": "Amérique du Nord",
@@ -75,6 +75,24 @@ try {
 quick = store.get("explora-quick") === "1";
 
 /* ---------- Chargement ---------- */
+// certains pays trop découpés ont été regroupés en grandes régions : on reporte les anciens marquages
+function migrate(merged) {
+  let changed = false;
+  for (const key of ["r", "w"]) {
+    for (const [id, ts] of [...state[key]]) {
+      const to = merged[id];
+      if (!to) continue;
+      state[key].delete(id);
+      state[key].set(to, Math.min(ts || Infinity, state[key].get(to) || Infinity) === Infinity ? 0 : Math.min(ts || Infinity, state[key].get(to) || Infinity));
+      changed = true;
+    }
+  }
+  for (const p of state.plans) {
+    const stops = [...new Set(p.stops.map(id => merged[id] || id))];
+    if (stops.join() !== p.stops.join()) { p.stops = stops; changed = true; }
+  }
+  if (changed) save();
+}
 function mainParts(f) {
   // pour cadrer un pays : garder les gros morceaux (évite la Guyane dans le cadrage de la France)
   const g = f.geometry;
@@ -91,7 +109,11 @@ function kindOf(code) {
 
 async function load() {
   // carte légère du monde : pays et régions tirés des mêmes contours, donc frontières identiques
-  const world = await fetch("data/world.json").then(r => r.json());
+  const [world, merged] = await Promise.all([
+    fetch("data/world.json").then(r => r.json()),
+    fetch("data/merged.json").then(r => r.json()).catch(() => ({}))
+  ]);
+  migrate(merged);
   countries = topojson.feature(world, world.objects.countries).features;
   for (const f of countries) byId.set(f.id, f);
   for (const r of topojson.feature(world, world.objects.regions).features) {
@@ -397,8 +419,8 @@ const BADGES = [
   { m: "AF", name: "Africain", desc: "5 pays d'Afrique", ok: s => (s.cont.Africa || 0) >= 5 },
   { m: "AS", name: "Asiatique", desc: "5 pays d'Asie", ok: s => (s.cont.Asia || 0) >= 5 },
   { m: "AM", name: "Américain", desc: "5 pays des Amériques", ok: s => (s.cont["North America"] || 0) + (s.cont["South America"] || 0) >= 5 },
-  { m: "50R", name: "Arpenteur", desc: "50 régions explorées", ok: s => s.regions >= 50 },
-  { m: "200", name: "Cartographe", desc: "200 régions explorées", ok: s => s.regions >= 200 },
+  { m: "50R", name: "Arpenteur", desc: "50 régions visitées", ok: s => s.regions >= 50 },
+  { m: "200", name: "Cartographe", desc: "200 régions visitées", ok: s => s.regions >= 200 },
   { m: "100%", name: "Grand chelem", desc: "Toutes les régions d'un pays", ok: s => s.complete >= 1 },
   { m: "1%", name: "Un pour cent", desc: "1 % du monde", ok: s => s.pct >= 1 },
   { m: "5%", name: "Bourlingueur", desc: "5 % du monde", ok: s => s.pct >= 5 },
@@ -435,15 +457,15 @@ function renderSheet() {
         <button class="btn ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "J'y suis allé"}</button>
       </div>
       <div class="prog">
-        <div class="row between"><span>${esc(cap(f.kind))} explor${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
+        <div class="row between"><span>${esc(cap(f.kind))} visit${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
         <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       </div>
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? `
       <div class="pick">
-        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Explorée" : "Exploré") : selWish ? "Dans tes envies" : (fem ? "Pas encore explorée" : "Pas encore exploré")}</small></div>
+        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
-        <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "explorée" : "exploré")}</button>
+        <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
       </div>` : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
     $("s-back").onclick = openWorld;
@@ -467,10 +489,10 @@ function renderSheet() {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
       <p class="hint">Touche un pays pour zoomer dedans, puis choisis les départements, états ou régions où tu es allé.</p>
-      <div class="legend"><span><b style="background:var(--fog)"></b>Inexploré</span><span><b style="background:var(--found)"></b>Exploré</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
+      <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
   } else {
-    sheet.innerHTML = `<div class="row between"><p class="hint" style="margin:0">Touche un pays pour l'explorer.</p>
-      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Exploré</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div>`;
+    sheet.innerHTML = `<div class="row between"><p class="hint" style="margin:0">Touche un pays pour zoomer dedans.</p>
+      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div>`;
   }
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
@@ -510,7 +532,7 @@ function renderProgress() {
       </svg>
       <div>
         <div class="big">${fmtPct(s.pct)}<small> %</small></div>
-        <div class="muted">du monde exploré</div>
+        <div class="muted">du monde visité</div>
         <div class="small" style="margin-top:6px">${fmtInt(area)} km² parcourus</div>
       </div>
     </div>
@@ -540,7 +562,7 @@ function renderProgress() {
     </div>
     ${top.length ? `
     <div class="block">
-      <h3>Pays les plus explorés</h3>
+      <h3>Pays les plus complets</h3>
       <div class="rows">${top.map(({ f, v }) => `
         <button class="r" data-open="${f.id}">
           <div class="row between"><span>${esc(f.properties.n)}</span><span class="num">${v} / ${f.nreg} ${esc(f.kind)}</span></div>
@@ -686,7 +708,7 @@ function renderTrips() {
     box.querySelectorAll("[data-w]").forEach(el => {
       const id = el.dataset.w;
       el.querySelector('[data-act="map"]').onclick = () => { showTab("map"); isCountry(id) ? openCountry(id) : openCountry(placeCountry(id), id); };
-      el.querySelector('[data-act="done"]').onclick = () => { isCountry(id) ? setCountry(id, true) : setRegion(id, true); toast(placeName(id) + " exploré ✓"); update(); };
+      el.querySelector('[data-act="done"]').onclick = () => { isCountry(id) ? setCountry(id, true) : setRegion(id, true); toast(placeName(id) + " ajouté à ta carte ✓"); update(); };
       el.querySelector('[data-act="del"]').onclick = () => { toggleWish(id); update(); };
     });
   } else {
@@ -1000,7 +1022,7 @@ btnLoc.onclick = () => {
     const r = regionAt(me.lon, me.lat);
     if (!r) { toast("Position trouvée"); return; }
     openCountry(r.code, r.id);
-    toast(state.r.has(r.id) ? "Tu es en " + r.properties.n + " (déjà explorée)" : "Tu es en " + r.properties.n + ". Touche « Marquer exploré » pour l'ajouter.", 3500);
+    toast(state.r.has(r.id) ? "Tu es en " + r.properties.n + " (déjà visité)" : "Tu es en " + r.properties.n + ". Touche « Marquer » pour l'ajouter.", 3500);
   }, err => {
     navigator.geolocation.clearWatch(watchId); watchId = null; btnLoc.classList.remove("on");
     toast(err.code === 1 ? "Autorise l'accès à ta position dans les réglages pour te voir sur la carte." : "Impossible de trouver ta position pour le moment.", 5000);

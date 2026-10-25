@@ -17,13 +17,9 @@ for (const f of a.features) m[f.properties.ADM0_A3] = { n: f.properties.NAME_FR 
 require("fs").writeFileSync(process.argv[2], JSON.stringify(Object.entries(m).map(([g, v]) => ({ g, ...v }))));
 ' "$SRC/ne_50m_admin_0_countries.geojson" "$TMP/names.json"
 
-# régions : petits territoires rattachés à leur pays, Antarctique et îlots disputés retirés
-mapshaper "$SRC/ne_10m_admin_1_states_provinces.geojson" \
-  -filter 'adm0_a3 != "ATA" && adm0_a3 != "PGA" && adm0_a3 != "CLP" && adm0_a3 != "CSI"' \
-  -each 'g = ({USG:"USA", UMI:"USA", ESB:"GBR", WSB:"GBR", GIB:"GBR", KAB:"KAZ"})[adm0_a3] || adm0_a3,
-         id = adm1_code, n = name_fr || name || name_en || gn_name || woe_name || adm1_code, t = type_en || ""' \
-  -filter-fields id,n,t,g \
-  -o "$TMP/regions.json" format=geojson
+# régions : petits territoires rattachés, découpages trop fins regroupés (voir tools/prep-regions.js)
+node "$(dirname "$0")/prep-regions.js" "$SRC/ne_10m_admin_1_states_provinces.geojson" "$TMP/regions-src.json" "$OUT/merged.json"
+mapshaper "$TMP/regions-src.json" -dissolve id copy-fields=n,t,g -o "$TMP/regions.json" format=geojson
 
 # 1) carte du monde légère : régions + pays fusionnés depuis les mêmes contours (frontières identiques)
 mapshaper "$TMP/regions.json" -simplify 7% keep-shapes \
