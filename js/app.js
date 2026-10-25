@@ -500,7 +500,6 @@ function renderSheet() {
 /* ---------- Onglet Progrès ---------- */
 function renderProgress() {
   const s = stats();
-  const area = exploredArea() * EARTH_R * EARTH_R;
   const conts = new Map();
   for (const f of countries) {
     const key = f.properties.c;
@@ -533,7 +532,6 @@ function renderProgress() {
       <div>
         <div class="big">${fmtPct(s.pct)}<small> %</small></div>
         <div class="muted">du monde visité</div>
-        <div class="small" style="margin-top:6px">${fmtInt(area)} km² parcourus</div>
       </div>
     </div>
     <div class="tiles">
