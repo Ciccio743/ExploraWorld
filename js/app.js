@@ -249,25 +249,28 @@ const cityTransform = d => `translate(${d.px},${d.py}) scale(${1 / k})`;
 function drawCities() {
   if (!cities.length || tab !== "map" || !W) return;
   const t = d3.zoomTransform(svg.node());
-  const minPop = 5000 / Math.pow(t.k, 1.5); // en milliers : 5 millions sur le monde entier, toutes les villes de près
+  // en milliers d'habitants : seules les très grandes villes de loin, les plus petites en zoomant fort
+  const minPop = Math.max(10, 8000 / Math.pow(t.k, 1.3));
   const topH = document.querySelector(".top").offsetHeight + 6;
   const boxes = [], shown = [];
   for (const c of cities) {
     if (c.pop < minPop) break;
+    if (current && c.code !== current) continue; // dans un pays, on ne nomme que ses villes
     const p = projection([c.lon, c.lat]);
     const x = t.applyX(p[0]), y = t.applyY(p[1]);
     if (x < 0 || y < topH || x > W || y > H) continue;
-    const b = [x - 4, y - 8, x + c.n.length * 6.4 + 10, y + 8];
+    // marge large autour de chaque nom pour garder la carte aérée
+    const b = [x - 30, y - 22, x + c.n.length * 5.6 + 36, y + 22];
     if (boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) continue;
     boxes.push(b);
     c.px = p[0]; c.py = p[1];
     shown.push(c);
-    if (shown.length >= 90) break;
+    if (shown.length >= 18) break;
   }
   gCities.selectAll(".city").data(shown, d => d.n + d.lon).join(enter => {
     const g = enter.append("g").attr("class", "city");
-    g.append("circle").attr("r", 2.5);
-    g.append("text").attr("x", 5).attr("dy", "0.35em").text(d => d.n);
+    g.append("circle").attr("r", 1.8);
+    g.append("text").attr("x", 4.5).attr("dy", "0.35em").text(d => d.n);
     return g;
   }).attr("transform", cityTransform);
 }
@@ -289,6 +292,7 @@ function showTip(e, text) {
 }
 
 function fitBounds([[x0, y0], [x1, y1]], dur = 650, pad = .9) {
+  gCities.selectAll("*").remove(); // les noms reviennent à la fin du zoom, adaptés au nouveau cadrage
   const topH = document.querySelector(".top").offsetHeight + 10;
   const sheetH = document.querySelector(".sheet .card").offsetHeight + 24;
   const availH = Math.max(140, H - sheetH - topH);
@@ -310,6 +314,7 @@ function openCountry(code, regionId = null, focus = false) {
 function openWorld() {
   current = null; selected = null;
   update();
+  gCities.selectAll("*").remove();
   svg.interrupt().transition().duration(reduceMotion() ? 0 : 650).ease(d3.easeCubicOut).call(zoom.transform, d3.zoomIdentity);
 }
 function showRoute(id) {

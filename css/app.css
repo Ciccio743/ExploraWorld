@@ -266,6 +266,6 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .tabbar button { font-size: 10.5px; }
 
 /* ---------- Villes ---------- */
-.city { pointer-events: none; }
-.city circle { fill: var(--ink); stroke: var(--fog); stroke-width: 1; }
-.city text { font: 600 11px var(--f-body); fill: var(--ink); paint-order: stroke; stroke: var(--fog); stroke-width: 3px; stroke-linejoin: round; }
+.city { pointer-events: none; opacity: .72; }
+.city circle { fill: var(--ink-2); }
+.city text { font: 500 10px var(--f-body); fill: var(--ink-2); paint-order: stroke; stroke: var(--fog); stroke-opacity: .7; stroke-width: 2.5px; stroke-linejoin: round; }
