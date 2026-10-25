@@ -1,0 +1,17 @@
+{
+  "name": "Explora World",
+  "short_name": "Explora",
+  "description": "Remplis ta carte du monde : pays, départements, états et régions visités.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1820",
+  "theme_color": "#0b1820",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
