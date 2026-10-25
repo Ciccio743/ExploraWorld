@@ -264,3 +264,8 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .wish-row .t { flex: 1 1 auto; min-width: 0; }
 .wish-row .t small { display: block; color: var(--ink-2); }
 .tabbar button { font-size: 10.5px; }
+
+/* ---------- Villes ---------- */
+.city { pointer-events: none; }
+.city circle { fill: var(--ink); stroke: var(--fog); stroke-width: 1; }
+.city text { font: 600 11px var(--f-body); fill: var(--ink); paint-order: stroke; stroke: var(--fog); stroke-width: 3px; stroke-linejoin: round; }

@@ -15,6 +15,8 @@ const SINGULAR = {
   "gouvernorats": "gouvernorat", "émirats": "émirat", "communautés": "communauté", "voïvodies": "voïvodie",
   "paroisses": "paroisse", "îles": "île", "territoires": "territoire", "républiques": "république"
 };
+// types de régions au féminin, pour accorder « explorées », « une région »...
+const FEMININE = new Set(["régions", "provinces", "préfectures", "municipalités", "communautés", "voïvodies", "paroisses", "îles", "républiques"]);
 const CONTINENT = {
   "Europe": "Europe", "Asia": "Asie", "Africa": "Afrique", "North America": "Amérique du Nord",
   "South America": "Amérique du Sud", "Oceania": "Océanie", "Seven seas (open ocean)": "Îles des océans"
@@ -109,6 +111,7 @@ async function load() {
   resize();
   drawBase();
   update();
+  loadCities().catch(() => {});
 }
 
 /* ---------- Contours détaillés d'un pays, chargés au zoom ---------- */
@@ -154,6 +157,7 @@ const gDetail = root.append("g").attr("class", "detail");
 const gOutline = root.append("g");
 const gSel = root.append("g");
 const gRoute = root.append("g");
+const gCities = root.append("g");
 const gMe = root.append("g");
 const projection = d3.geoNaturalEarth1();
 const path = d3.geoPath(projection);
@@ -165,8 +169,9 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   root.attr("transform", e.transform);
   if (me) drawMe();
   if (routePlan) sizeStops();
+  gCities.selectAll(".city").attr("transform", cityTransform);
   tip.hidden = true;
-});
+}).on("end", drawCities);
 svg.call(zoom).on("dblclick.zoom", null);
 
 function resize() {
@@ -232,6 +237,44 @@ function sizeStops() {
   gRoute.selectAll(".stop text").style("font-size", 11 / k + "px");
 }
 
+/* ---------- Villes ---------- */
+// GeoNames (CC BY 4.0) : villes de plus de 10 000 habitants, triées de la plus peuplée à la moins peuplée
+let cities = [];
+async function loadCities() {
+  const d = await fetch("data/cities.json").then(r => r.json());
+  cities = d.cities.map(([n, lon, lat, pop, ci]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n) }));
+  drawCities();
+}
+const cityTransform = d => `translate(${d.px},${d.py}) scale(${1 / k})`;
+function drawCities() {
+  if (!cities.length || tab !== "map" || !W) return;
+  const t = d3.zoomTransform(svg.node());
+  const minPop = 5000 / Math.pow(t.k, 1.5); // en milliers : 5 millions sur le monde entier, toutes les villes de près
+  const topH = document.querySelector(".top").offsetHeight + 6;
+  const boxes = [], shown = [];
+  for (const c of cities) {
+    if (c.pop < minPop) break;
+    const p = projection([c.lon, c.lat]);
+    const x = t.applyX(p[0]), y = t.applyY(p[1]);
+    if (x < 0 || y < topH || x > W || y > H) continue;
+    const b = [x - 4, y - 8, x + c.n.length * 6.4 + 10, y + 8];
+    if (boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) continue;
+    boxes.push(b);
+    c.px = p[0]; c.py = p[1];
+    shown.push(c);
+    if (shown.length >= 90) break;
+  }
+  gCities.selectAll(".city").data(shown, d => d.n + d.lon).join(enter => {
+    const g = enter.append("g").attr("class", "city");
+    g.append("circle").attr("r", 2.5);
+    g.append("text").attr("x", 5).attr("dy", "0.35em").text(d => d.n);
+    return g;
+  }).attr("transform", cityTransform);
+}
+function regionIn(code, lon, lat) {
+  return (regionsBy.get(code) || []).find(r => d3.geoContains(r, [lon, lat])) || null;
+}
+
 function drawMe() {
   const pts = me ? [projection([me.lon, me.lat])] : [];
   gMe.selectAll(".me-halo").data(pts).join("circle").attr("class", "me-halo").attr("cx", d => d[0]).attr("cy", d => d[1]).attr("r", 16 / k);
@@ -255,12 +298,13 @@ function fitBounds([[x0, y0], [x1, y1]], dur = 650, pad = .9) {
 }
 const zoomTo = (feature, dur) => fitBounds(path.bounds(feature), dur);
 
-function openCountry(code, regionId = null) {
+function openCountry(code, regionId = null, focus = false) {
   current = code;
   selected = regionId;
   routePlan = null;
   update();
-  zoomTo(byId.get(code).main);
+  // une ville cherchée : on cadre sa région, sinon le pays entier
+  zoomTo(focus && regionId ? regionById.get(regionId) : byId.get(code).main);
   ensureDetail(code).then(d => { if (d && current === code) drawMap(); });
 }
 function openWorld() {
@@ -303,7 +347,7 @@ function toggleRegion(id) {
   const on = !state.r.has(id);
   setRegion(id, on);
   const r = regionById.get(id);
-  toast(on ? r.properties.n + " exploré ✓" : r.properties.n + " retiré", 1300);
+  toast(on ? r.properties.n + " ajouté à ta carte ✓" : r.properties.n + " retiré", 1300);
 }
 function setCountry(code, on, ts = Date.now()) {
   if (on) { state.c.set(code, state.c.get(code) || ts); state.w.delete(code); }
@@ -377,7 +421,8 @@ function renderSheet() {
     const f = byId.get(current), n = f.nreg, v = visitedIn(current), been = state.c.has(current), wish = state.w.has(current);
     const sel = selected && regionById.get(selected);
     const selOn = sel && state.r.has(sel.id), selWish = sel && state.w.has(sel.id);
-    const one = SINGULAR[f.kind] || "endroit";
+    const one = SINGULAR[f.kind] || "endroit", fem = FEMININE.has(f.kind);
+    const un = (fem ? "une " : "un ") + one, le = fem ? "la" : "le";
     sheet.innerHTML = `
       <button class="back" id="s-back">← Monde</button>
       <div class="row">
@@ -385,16 +430,16 @@ function renderSheet() {
         <button class="btn ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "J'y suis allé"}</button>
       </div>
       <div class="prog">
-        <div class="row between"><span>${esc(cap(f.kind))} explorés</span><span class="num">${v} / ${n}</span></div>
+        <div class="row between"><span>${esc(cap(f.kind))} explor${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
         <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       </div>
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? `
       <div class="pick">
-        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? "Exploré" : selWish ? "Dans tes envies" : "Pas encore exploré"}</small></div>
+        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Explorée" : "Exploré") : selWish ? "Dans tes envies" : (fem ? "Pas encore explorée" : "Pas encore exploré")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
-        <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer exploré"}</button>
-      </div>` : `<p class="hint">${quick ? "Touche un " + esc(one) + " pour le marquer ou le retirer." : "Touche un " + esc(one) + " pour le sélectionner."}</p>`}
+        <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "explorée" : "exploré")}</button>
+      </div>` : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
     $("s-back").onclick = openWorld;
     $("s-been").onclick = () => { setCountry(current, !been); update(); };
@@ -800,6 +845,14 @@ function searchHits(s, withRegions) {
     if (hits.length > 30) break;
     if (norm(r.properties.n).includes(s)) hits.push({ n: r.properties.n, k: byId.get(r.code)?.properties.n || "", c: r.code, r: r.id });
   }
+  if (s.length >= 3 && hits.length < 12) {
+    for (const c of cities) {
+      if (hits.length >= 12) break;
+      if (!c.key.startsWith(s) && !(s.length >= 4 && c.key.includes(s))) continue;
+      const r = regionIn(c.code, c.lon, c.lat);
+      if (r) hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
+    }
+  }
   return hits.slice(0, 12);
 }
 function bindSearch(input, list, withRegions, label, pick) {
@@ -808,18 +861,18 @@ function bindSearch(input, list, withRegions, label, pick) {
     const s = norm(input.value.trim());
     if (!s) { list.hidden = true; return; }
     const hits = searchHits(s, regions());
-    list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
+    list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
       || `<li class="empty">Aucun résultat</li>`;
     list.hidden = false;
     list.querySelectorAll("button").forEach(b => b.onclick = () => {
       input.value = ""; list.hidden = true; input.blur();
-      pick(b.dataset.c, b.dataset.r || null);
+      pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city);
     });
   });
   input.addEventListener("keydown", e => { if (e.key === "Escape") { input.value = ""; list.hidden = true; } });
   input.addEventListener("blur", () => setTimeout(() => list.hidden = true, 200));
 }
-bindSearch($("q"), $("results"), true, h => h.k, (c, r) => openCountry(c, r));
+bindSearch($("q"), $("results"), true, h => h.k, (c, r, city) => openCountry(c, r, city));
 bindSearch($("add-q"), $("add-results"), () => tripView === "wish",
   h => tripView === "wish" ? (state.w.has(h.r || h.c) ? "déjà en envie" : h.k) : (state.c.has(h.c) ? "déjà ajouté" : "ajouter"),
   (c, r) => {
@@ -844,6 +897,7 @@ function showTab(name) {
     svg.call(zoom.transform, d3.zoomIdentity); drawBase(); update();
     if (current) zoomTo(byId.get(current).main, 0);
   }
+  if (name === "map") drawCities();
   if (name === "progress") renderProgress();
   if (name === "trips") renderTrips();
   if (name === "plans") renderPlans();
