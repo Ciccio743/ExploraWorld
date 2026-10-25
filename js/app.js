@@ -25,7 +25,7 @@ const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet"
 
 const $ = id => document.getElementById(id);
 // à augmenter quand les fichiers de data/ changent, pour que les téléphones ne gardent pas l'ancienne version
-const DATA_VERSION = 2;
+const DATA_VERSION = 3;
 const dataUrl = file => "data/" + file + "?v=" + DATA_VERSION;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -130,6 +130,13 @@ async function load() {
     if (!regionsBy.has(r.code)) regionsBy.set(r.code, []);
     regionsBy.get(r.code).push(r);
   }
+  // régions qui n'existent plus dans ce découpage (ancien regroupement) : retirées, le pays reste visité
+  let pruned = false;
+  for (const key of ["r", "w"]) for (const id of [...state[key].keys()]) {
+    if (key === "w" && byId.has(id)) continue;
+    if (!regionById.has(id)) { state[key].delete(id); pruned = true; }
+  }
+  if (pruned) save();
   for (const fs of regionsBy.values()) fs.sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
   for (const f of countries) {
     f.main = mainParts(f);
@@ -387,10 +394,13 @@ function toggleRegion(id) {
   toast(on ? r.properties.n + " ajouté à ta carte ✓" : r.properties.n + " retiré", 1300);
 }
 // date d'une visite à partir d'un champ mois (« 2024-03 ») ; vide = date inconnue
+function monthTs(value) {
+  const [y, m] = (value || "").split("-").map(Number);
+  return y && m ? new Date(y, m - 1, 15, 12).getTime() : 0;
+}
 function setVisitMonth(code, value) {
   if (!state.c.has(code)) return;
-  const [y, m] = (value || "").split("-").map(Number);
-  state.c.set(code, y && m ? new Date(y, m - 1, 15, 12).getTime() : 0);
+  state.c.set(code, monthTs(value));
   save();
 }
 function setCountry(code, on, ts = 0) {
@@ -477,7 +487,7 @@ function renderSheet() {
         <div class="row between"><span>${esc(cap(f.kind))} visit${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
         <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       </div>
-      ${been ? `<label class="when" style="margin-top:10px">Date de visite (facultatif) <input type="month" id="s-date" value="${monthValue(state.c.get(current))}" max="${monthValue(Date.now())}"></label>` : ""}
+      <label class="when" style="margin-top:10px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? `
       <div class="pick">
@@ -487,8 +497,9 @@ function renderSheet() {
       </div>` : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
     $("s-back").onclick = openWorld;
-    $("s-been").onclick = () => { setCountry(current, !been); update(); };
-    if ($("s-date")) $("s-date").onchange = e => setVisitMonth(current, e.target.value);
+    // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
+    $("s-been").onclick = () => { setCountry(current, !been, monthTs($("s-date").value)); update(); };
+    $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
     if (sel) $("s-mark").onclick = () => { toggleRegion(sel.id); update(); };
     if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
