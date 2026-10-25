@@ -1,5 +1,5 @@
 // Mode hors ligne : on essaie toujours le réseau d'abord (une nouvelle version
-// d'index.html déposée sur GitHub est donc prise tout de suite), et on retombe
+// de l'appli mise sur GitHub est donc prise tout de suite), et on retombe
 // sur la copie en cache quand il n'y a pas de connexion.
 const CACHE = "explora";
 

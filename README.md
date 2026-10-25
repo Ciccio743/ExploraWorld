@@ -2,7 +2,9 @@
 
 Remplis ta carte du monde. Touche un pays pour zoomer dedans, puis marque chaque département, état ou région où tu es allé.
 
-- 4 onglets : Carte, Progrès, Voyages, Réglages
+- 5 onglets : Carte, Progrès, Voyages, Projets, Réglages
+- projets de voyage et tours du monde : étapes, dates, itinéraire sur la carte
+- envies (en bleu sur la carte), frise chronologique, badges, image à partager
 - thème Auto, Clair ou Sombre
 - % du monde découvert (calculé sur la surface des régions explorées)
 - nombre de pays visités (sur 195) et de régions explorées
@@ -20,7 +22,9 @@ Les marquages sont enregistrés sur l'appareil (localStorage).
 | `index.html` | structure de l'appli et des 4 onglets |
 | `css/app.css` | styles, thèmes clair et sombre |
 | `js/app.js` | carte, marquage, progrès, voyages, réglages, position |
-| `data/` | frontières simplifiées (Natural Earth : pays 1:50m, régions 1:10m) |
+| `data/world.json` | carte légère du monde (pays et régions, mêmes contours) |
+| `data/r/` | contours détaillés de chaque pays, chargés au zoom |
+| `tools/build-data.sh` | régénère `data/` depuis Natural Earth 1:10m |
 | `vendor/` | d3 7.9.0 et topojson-client 3.1.0 |
 | `sw.js`, `manifest.webmanifest`, `icons/` | installation et mode hors ligne |
 

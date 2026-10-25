@@ -19,6 +19,8 @@ const CONTINENT = {
   "Europe": "Europe", "Asia": "Asie", "Africa": "Afrique", "North America": "Amérique du Nord",
   "South America": "Amérique du Sud", "Oceania": "Océanie", "Seven seas (open ocean)": "Îles des océans"
 };
+const OCEAN_ISLANDS = "Seven seas (open ocean)";
+const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -27,13 +29,18 @@ const cap = s => s[0].toUpperCase() + s.slice(1);
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const fmtPct = p => p === 0 ? "0" : p < .01 ? "<0,01" : (p < 10 ? p.toFixed(2) : p.toFixed(1)).replace(".", ",");
 const fmtInt = n => Math.round(n).toLocaleString("fr-FR");
+const plural = (n, one, many) => n + " " + (n > 1 ? many : one);
+const fmtDate = iso => { if (!iso) return ""; const d = new Date(iso + "T12:00"); return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear(); };
+const monthValue = ts => { if (!ts) return ""; const d = new Date(ts); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
+const today = () => { const d = new Date(); d.setHours(12, 0, 0, 0); return d; };
 
 /* ---------- Données et état ---------- */
 let countries = [], byId = new Map(), regionsBy = new Map(), regionById = new Map();
 let worldArea = 0;
-// pays et régions visités : id -> date du marquage (ms)
-let state = { c: new Map(), r: new Map() };
-let current = null, selected = null, tab = "map";
+// c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
+let state = { c: new Map(), r: new Map(), w: new Map(), plans: [] };
+let current = null, selected = null, tab = "map", tripView = "visited";
+let routePlan = null; // projet affiché sur la carte
 let quick = false;
 let me = null, watchId = null;
 
@@ -49,9 +56,20 @@ function toMap(v) {
   if (v && typeof v === "object") return new Map(Object.entries(v).map(([k, t]) => [k, +t || 0]));
   return new Map();
 }
-function serialize() { return { v: 2, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), t: Date.now() }; }
+function cleanPlans(list) {
+  return (Array.isArray(list) ? list : []).filter(p => p && p.id).map(p => ({
+    id: String(p.id), name: String(p.name || "Mon projet"), start: p.start || "", end: p.end || "",
+    stops: Array.isArray(p.stops) ? p.stops.map(String) : [], notes: String(p.notes || ""), done: !!p.done
+  }));
+}
+function serialize() {
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), plans: state.plans, t: Date.now() };
+}
 function save() { store.set(LS, JSON.stringify(serialize())); }
-try { const d = JSON.parse(store.get(LS) || "null"); if (d) state = { c: toMap(d.c), r: toMap(d.r) }; } catch (e) {}
+try {
+  const d = JSON.parse(store.get(LS) || "null");
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), plans: cleanPlans(d.plans) };
+} catch (e) {}
 quick = store.get("explora-quick") === "1";
 
 /* ---------- Chargement ---------- */
@@ -70,18 +88,17 @@ function kindOf(code) {
 }
 
 async function load() {
-  const [ct, rt] = await Promise.all([
-    fetch("data/countries.json").then(r => r.json()),
-    fetch("data/regions.json").then(r => r.json())
-  ]);
-  countries = topojson.feature(ct, ct.objects.a0).features;
+  // carte légère du monde : pays et régions tirés des mêmes contours, donc frontières identiques
+  const world = await fetch("data/world.json").then(r => r.json());
+  countries = topojson.feature(world, world.objects.countries).features;
   for (const f of countries) byId.set(f.id, f);
-  for (const [code, obj] of Object.entries(rt.objects)) {
-    const fs = topojson.feature(rt, obj).features;
-    for (const r of fs) { r.area = d3.geoArea(r); r.code = code; regionById.set(r.id, r); worldArea += r.area; }
-    fs.sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
-    regionsBy.set(code, fs);
+  for (const r of topojson.feature(world, world.objects.regions).features) {
+    r.area = d3.geoArea(r); r.code = r.properties.g;
+    regionById.set(r.id, r); worldArea += r.area;
+    if (!regionsBy.has(r.code)) regionsBy.set(r.code, []);
+    regionsBy.get(r.code).push(r);
   }
+  for (const fs of regionsBy.values()) fs.sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
   for (const f of countries) {
     f.main = mainParts(f);
     f.kind = kindOf(f.id);
@@ -94,6 +111,40 @@ async function load() {
   update();
 }
 
+/* ---------- Contours détaillés d'un pays, chargés au zoom ---------- */
+const details = new Map(); // code -> { regions, byId, outline } ou promesse en cours
+function ensureDetail(code) {
+  if (details.has(code)) return Promise.resolve(details.get(code));
+  const p = fetch("data/r/" + code + ".json").then(r => r.json()).then(t => {
+    const obj = t.objects.regions;
+    const regions = topojson.feature(t, obj).features;
+    for (const r of regions) { r.detail = true; r.code = code; }
+    const d = { regions, byId: new Map(regions.map(r => [r.id, r])), outline: topojson.merge(t, obj.geometries) };
+    details.set(code, d);
+    return d;
+  }).catch(() => { details.delete(code); return null; });
+  details.set(code, p);
+  return p;
+}
+const detailOf = code => { const d = details.get(code); return d && !(d instanceof Promise) ? d : null; };
+const shapeOf = id => { const r = regionById.get(id); return (r && detailOf(r.code)?.byId.get(id)) || r; };
+
+/* ---------- Lieux (pays ou région) ---------- */
+const isCountry = id => byId.has(id);
+const place = id => byId.get(id) || regionById.get(id);
+const placeName = id => place(id)?.properties.n || id;
+const placeCountry = id => isCountry(id) ? id : regionById.get(id)?.code;
+function placeSub(id) {
+  if (isCountry(id)) return "";
+  const r = regionById.get(id);
+  return r ? byId.get(r.code)?.properties.n || "" : "";
+}
+function centroid(id) {
+  const f = byId.get(id);
+  return d3.geoCentroid(f ? f.main : regionById.get(id));
+}
+function isVisited(id) { return isCountry(id) ? state.c.has(id) : state.r.has(id); }
+
 /* ---------- Carte ---------- */
 const svg = d3.select("#map");
 const root = svg.append("g");
@@ -102,6 +153,7 @@ const gOverlay = root.append("g");
 const gDetail = root.append("g").attr("class", "detail");
 const gOutline = root.append("g");
 const gSel = root.append("g");
+const gRoute = root.append("g");
 const gMe = root.append("g");
 const projection = d3.geoNaturalEarth1();
 const path = d3.geoPath(projection);
@@ -112,6 +164,7 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   k = e.transform.k;
   root.attr("transform", e.transform);
   if (me) drawMe();
+  if (routePlan) sizeStops();
   tip.hidden = true;
 });
 svg.call(zoom).on("dblclick.zoom", null);
@@ -127,9 +180,7 @@ function resize() {
 }
 
 function drawBase() {
-  gBase.selectAll("*").remove();
-  gOverlay.selectAll("*").remove();
-  gDetail.selectAll("*").remove();
+  for (const g of [gBase, gOverlay, gDetail, gRoute]) g.selectAll("*").remove();
   gBase.append("path").attr("class", "sphere").attr("d", path({ type: "Sphere" }));
   gBase.append("path").attr("class", "grat").attr("d", path(d3.geoGraticule10()));
   gBase.selectAll(".country").data(countries, d => d.id).join("path")
@@ -140,17 +191,45 @@ function drawBase() {
 }
 
 function drawMap() {
-  gBase.selectAll(".country").classed("visited", d => state.c.has(d.id)).classed("active", d => d.id === current);
-  const others = [...state.r.keys()].map(id => regionById.get(id)).filter(r => r && r.code !== current);
-  gOverlay.selectAll(".region").data(others, d => d.id).join(enter => enter.append("path").attr("class", "region visited").attr("d", path));
-  gDetail.selectAll(".region").data(current ? regionsBy.get(current) || [] : [], d => d.id).join(
+  gBase.selectAll(".country")
+    .classed("visited", d => state.c.has(d.id))
+    .classed("wish", d => !state.c.has(d.id) && state.w.has(d.id))
+    .classed("active", d => d.id === current);
+  const marked = new Set([...state.r.keys(), ...[...state.w.keys()].filter(id => regionById.has(id))]);
+  const others = [...marked].map(id => regionById.get(id)).filter(r => r && r.code !== current);
+  gOverlay.selectAll(".region").data(others, d => d.id)
+    .join(enter => enter.append("path").attr("d", path))
+    .attr("class", d => "region " + (state.r.has(d.id) ? "visited" : "wish"));
+  const det = current && detailOf(current);
+  gDetail.selectAll(".region").data(current ? (det ? det.regions : regionsBy.get(current) || []) : [], d => d.id + (d.detail ? "+" : "")).join(
     enter => enter.append("path").attr("class", "region").attr("d", path)
       .on("click", (e, d) => { e.stopPropagation(); tapRegion(d); })
       .on("pointermove", (e, d) => showTip(e, d.properties.n))
       .on("pointerleave", () => tip.hidden = true)
-  ).classed("visited", d => state.r.has(d.id));
-  gOutline.selectAll("path").data(current ? [byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
-  gSel.selectAll("path").data(selected ? [regionById.get(selected)] : [], d => d.id).join("path").attr("class", "selected").attr("d", path);
+  ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id));
+  gOutline.selectAll("path").data(current ? [det ? det.outline : byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
+  gSel.selectAll("path").data(selected ? [shapeOf(selected)] : [], d => d.id + (d.detail ? "+" : "")).join("path").attr("class", "selected").attr("d", path);
+  drawRoute();
+}
+
+function drawRoute() {
+  const plan = routePlan && state.plans.find(p => p.id === routePlan);
+  const stops = plan ? plan.stops.filter(place) : [];
+  const pts = stops.map(centroid);
+  gRoute.selectAll(".route").data(pts.length > 1 ? [pts] : []).join("path").attr("class", "route")
+    .attr("d", d => path({ type: "LineString", coordinates: d }));
+  const g = gRoute.selectAll(".stop").data(pts).join(enter => {
+    const s = enter.append("g").attr("class", "stop");
+    s.append("circle"); s.append("text");
+    return s;
+  });
+  g.attr("transform", d => { const [x, y] = projection(d); return `translate(${x},${y})`; });
+  g.select("text").text((d, i) => i + 1);
+  sizeStops();
+}
+function sizeStops() {
+  gRoute.selectAll(".stop circle").attr("r", 10 / k);
+  gRoute.selectAll(".stop text").style("font-size", 11 / k + "px");
 }
 
 function drawMe() {
@@ -166,29 +245,43 @@ function showTip(e, text) {
   tip.style.left = (e.clientX - r.left) + "px"; tip.style.top = (e.clientY - r.top) + "px";
 }
 
-function zoomTo(feature, dur = 650) {
-  const [[x0, y0], [x1, y1]] = path.bounds(feature);
+function fitBounds([[x0, y0], [x1, y1]], dur = 650, pad = .9) {
   const topH = document.querySelector(".top").offsetHeight + 10;
   const sheetH = document.querySelector(".sheet .card").offsetHeight + 24;
   const availH = Math.max(140, H - sheetH - topH);
-  const s = Math.min(600, .9 / Math.max((x1 - x0) / W, (y1 - y0) / availH));
+  const s = Math.max(1, Math.min(600, pad / Math.max((x1 - x0) / W, (y1 - y0) / availH, 1e-6)));
   const t = d3.zoomIdentity.translate(W / 2, topH + availH / 2).scale(s).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
   svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, t);
 }
+const zoomTo = (feature, dur) => fitBounds(path.bounds(feature), dur);
 
 function openCountry(code, regionId = null) {
   current = code;
   selected = regionId;
+  routePlan = null;
   update();
   zoomTo(byId.get(code).main);
+  ensureDetail(code).then(d => { if (d && current === code) drawMap(); });
 }
 function openWorld() {
   current = null; selected = null;
   update();
   svg.interrupt().transition().duration(reduceMotion() ? 0 : 650).ease(d3.easeCubicOut).call(zoom.transform, d3.zoomIdentity);
 }
+function showRoute(id) {
+  const plan = state.plans.find(p => p.id === id);
+  if (!plan) return;
+  showTab("map");
+  current = null; selected = null; routePlan = id;
+  update();
+  const pts = plan.stops.filter(place).map(id => projection(centroid(id)));
+  if (!pts.length) { svg.call(zoom.transform, d3.zoomIdentity); return; }
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const pad = 30;
+  fitBounds([[d3.min(xs) - pad, d3.min(ys) - pad], [d3.max(xs) + pad, d3.max(ys) + pad]], 650, pts.length > 1 ? .85 : .1);
+}
 svg.on("click", () => { if (selected) { selected = null; update(); } else if (current) openWorld(); });
-$("btn-world").onclick = openWorld;
+$("btn-world").onclick = () => { routePlan = null; openWorld(); };
 
 /* ---------- Marquage ---------- */
 function tapRegion(r) {
@@ -196,11 +289,14 @@ function tapRegion(r) {
   selected = selected === r.id ? null : r.id;
   update();
 }
-function setRegion(id, on) {
+function setRegion(id, on, ts = Date.now()) {
   const r = regionById.get(id);
   if (!r) return;
-  if (on) { state.r.set(id, state.r.get(id) || Date.now()); if (!state.c.has(r.code)) state.c.set(r.code, Date.now()); }
-  else state.r.delete(id);
+  if (on) {
+    state.r.set(id, state.r.get(id) || ts);
+    if (!state.c.has(r.code)) state.c.set(r.code, ts);
+    state.w.delete(id);
+  } else state.r.delete(id);
   save();
 }
 function toggleRegion(id) {
@@ -209,9 +305,14 @@ function toggleRegion(id) {
   const r = regionById.get(id);
   toast(on ? r.properties.n + " exploré ✓" : r.properties.n + " retiré", 1300);
 }
-function setCountry(code, on) {
-  if (on) state.c.set(code, state.c.get(code) || Date.now());
+function setCountry(code, on, ts = Date.now()) {
+  if (on) { state.c.set(code, state.c.get(code) || ts); state.w.delete(code); }
   else { state.c.delete(code); for (const r of regionsBy.get(code) || []) state.r.delete(r.id); }
+  save();
+}
+function toggleWish(id) {
+  if (state.w.has(id)) { state.w.delete(id); toast(placeName(id) + " retiré de tes envies", 1400); }
+  else { state.w.set(id, Date.now()); toast(placeName(id) + " ajouté à tes envies ★", 1400); }
   save();
 }
 
@@ -219,25 +320,64 @@ function setCountry(code, on) {
 function visitedIn(code) { return (regionsBy.get(code) || []).reduce((n, r) => n + state.r.has(r.id), 0); }
 function exploredArea() { let a = 0; for (const id of state.r.keys()) { const r = regionById.get(id); if (r) a += r.area; } return a; }
 function worldPct() { return worldArea ? exploredArea() / worldArea * 100 : 0; }
+function stats() {
+  const conts = new Set(), cont = {};
+  let europe = 0, complete = 0;
+  for (const id of state.c.keys()) {
+    const f = byId.get(id); if (!f) continue;
+    const c = f.properties.c;
+    if (c !== OCEAN_ISLANDS) conts.add(c);
+    cont[c] = (cont[c] || 0) + 1;
+    if (c === "Europe") europe++;
+    if (f.nreg > 1 && visitedIn(id) === f.nreg) complete++;
+  }
+  return { n: state.c.size, regions: state.r.size, continents: conts.size, cont, europe, complete, pct: worldPct(), plans: state.plans.length, wish: state.w.size };
+}
+
+/* ---------- Badges ---------- */
+const BADGES = [
+  { m: "1", name: "Premier pas", desc: "1 pays visité", ok: s => s.n >= 1 },
+  { m: "5", name: "Voyageur", desc: "5 pays", ok: s => s.n >= 5 },
+  { m: "10", name: "Globe-trotter", desc: "10 pays", ok: s => s.n >= 10 },
+  { m: "25", name: "Aventurier", desc: "25 pays", ok: s => s.n >= 25 },
+  { m: "50", name: "Grand explorateur", desc: "50 pays", ok: s => s.n >= 50 },
+  { m: "100", name: "Légende", desc: "100 pays", ok: s => s.n >= 100 },
+  { m: "3C", name: "Trois continents", desc: "Pays sur 3 continents", ok: s => s.continents >= 3 },
+  { m: "6C", name: "Tour des continents", desc: "Les 6 continents habités", ok: s => s.continents >= 6 },
+  { m: "EU", name: "Européen", desc: "10 pays d'Europe", ok: s => s.europe >= 10 },
+  { m: "AF", name: "Africain", desc: "5 pays d'Afrique", ok: s => (s.cont.Africa || 0) >= 5 },
+  { m: "AS", name: "Asiatique", desc: "5 pays d'Asie", ok: s => (s.cont.Asia || 0) >= 5 },
+  { m: "AM", name: "Américain", desc: "5 pays des Amériques", ok: s => (s.cont["North America"] || 0) + (s.cont["South America"] || 0) >= 5 },
+  { m: "50R", name: "Arpenteur", desc: "50 régions explorées", ok: s => s.regions >= 50 },
+  { m: "200", name: "Cartographe", desc: "200 régions explorées", ok: s => s.regions >= 200 },
+  { m: "100%", name: "Grand chelem", desc: "Toutes les régions d'un pays", ok: s => s.complete >= 1 },
+  { m: "1%", name: "Un pour cent", desc: "1 % du monde", ok: s => s.pct >= 1 },
+  { m: "5%", name: "Bourlingueur", desc: "5 % du monde", ok: s => s.pct >= 5 },
+  { m: "10%", name: "Conquérant", desc: "10 % du monde", ok: s => s.pct >= 10 },
+  { m: "★", name: "Rêveur", desc: "5 envies notées", ok: s => s.wish >= 5 },
+  { m: "✈", name: "Organisateur", desc: "Un projet de voyage", ok: s => s.plans >= 1 }
+];
 
 /* ---------- Mise à jour de l'écran ---------- */
 function update() {
   if (!countries.length) return;
   drawMap();
-  const pct = worldPct();
-  $("m-pct").textContent = fmtPct(pct) + " %";
+  $("m-pct").textContent = fmtPct(worldPct()) + " %";
   $("m-countries").textContent = state.c.size;
   renderSheet();
   if (tab === "progress") renderProgress();
   if (tab === "trips") renderTrips();
+  if (tab === "plans") renderPlans();
 }
 
 function renderSheet() {
   const sheet = $("sheet");
+  const plan = routePlan && state.plans.find(p => p.id === routePlan);
   if (current) {
-    const f = byId.get(current), n = f.nreg, v = visitedIn(current), been = state.c.has(current);
+    const f = byId.get(current), n = f.nreg, v = visitedIn(current), been = state.c.has(current), wish = state.w.has(current);
     const sel = selected && regionById.get(selected);
-    const selOn = sel && state.r.has(sel.id);
+    const selOn = sel && state.r.has(sel.id), selWish = sel && state.w.has(sel.id);
+    const one = SINGULAR[f.kind] || "endroit";
     sheet.innerHTML = `
       <button class="back" id="s-back">← Monde</button>
       <div class="row">
@@ -248,32 +388,47 @@ function renderSheet() {
         <div class="row between"><span>${esc(cap(f.kind))} explorés</span><span class="num">${v} / ${n}</span></div>
         <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       </div>
+      ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? `
       <div class="pick">
-        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? "Exploré" : "Pas encore exploré"}</small></div>
+        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? "Exploré" : selWish ? "Dans tes envies" : "Pas encore exploré"}</small></div>
+        ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
         <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer exploré"}</button>
-      </div>` : `<p class="hint">${quick ? "Touche un " + esc(SINGULAR[f.kind] || "endroit") + " pour le marquer ou le retirer." : "Touche un " + esc(SINGULAR[f.kind] || "endroit") + " pour le sélectionner."}</p>`}
+      </div>` : `<p class="hint">${quick ? "Touche un " + esc(one) + " pour le marquer ou le retirer." : "Touche un " + esc(one) + " pour le sélectionner."}</p>`}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
     $("s-back").onclick = openWorld;
     $("s-been").onclick = () => { setCountry(current, !been); update(); };
+    if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
     if (sel) $("s-mark").onclick = () => { toggleRegion(sel.id); update(); };
+    if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
     $("s-quick").onchange = e => { quick = e.target.checked; store.set("explora-quick", quick ? "1" : "0"); renderSheet(); };
-  } else if (!state.c.size) {
+  } else if (plan) {
+    sheet.innerHTML = `
+      <div class="row"><h2 class="grow">${esc(plan.name)}</h2><button class="btn small" id="s-close">Fermer</button></div>
+      <p class="hint" style="margin-top:4px">${planDates(plan) || plural(plan.stops.length, "étape", "étapes")}</p>
+      <ol class="stops">${plan.stops.filter(place).map((id, i) => `
+        <li><span class="n">${i + 1}</span><span class="t">${esc(placeName(id))} <small>${esc(placeSub(id))}</small></span>
+        ${isVisited(id) ? `<span class="chip new">déjà fait</span>` : ""}</li>`).join("") || `<li class="muted">Aucune étape pour l'instant.</li>`}
+      </ol>
+      <div class="btns"><button class="btn small" id="s-edit">Modifier le projet</button></div>`;
+    $("s-close").onclick = () => { routePlan = null; openWorld(); };
+    $("s-edit").onclick = () => { editPlan = { ...plan, stops: [...plan.stops] }; showTab("plans"); };
+  } else if (!state.c.size && !state.w.size) {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
       <p class="hint">Touche un pays pour zoomer dedans, puis choisis les départements, états ou régions où tu es allé.</p>
-      <div class="legend"><span><b style="background:var(--fog)"></b>Inexploré</span><span><b style="background:var(--found-soft)"></b>Pays visité</span><span><b style="background:var(--found)"></b>Région explorée</span></div>`;
+      <div class="legend"><span><b style="background:var(--fog)"></b>Inexploré</span><span><b style="background:var(--found)"></b>Exploré</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
   } else {
-    sheet.innerHTML = `<p class="hint" style="margin:0">Touche un pays pour l'explorer.</p>`;
+    sheet.innerHTML = `<div class="row between"><p class="hint" style="margin:0">Touche un pays pour l'explorer.</p>
+      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Exploré</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div>`;
   }
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
 
 /* ---------- Onglet Progrès ---------- */
 function renderProgress() {
-  const pct = worldPct();
+  const s = stats();
   const area = exploredArea() * EARTH_R * EARTH_R;
-  const n = state.c.size;
   const conts = new Map();
   for (const f of countries) {
     const key = f.properties.c;
@@ -287,34 +442,42 @@ function renderProgress() {
     if (f) conts.get(f.properties.c).seen += r.area;
   }
   const contList = [...conts.values()].sort((a, b) => b.seen / b.total - a.seen / a.total || b.countries - a.countries);
-  const contVisited = contList.filter(c => c.countries > 0 && c.name !== CONTINENT["Seven seas (open ocean)"]).length;
-  const next = MILESTONES.find(m => m > n);
+  const next = MILESTONES.find(m => m > s.n);
   const top = [...state.c.keys()].map(id => byId.get(id)).filter(f => f && f.nreg > 1)
     .map(f => ({ f, v: visitedIn(f.id) })).sort((a, b) => b.v / b.f.nreg - a.v / a.f.nreg).slice(0, 6);
-  const C = 2 * Math.PI * 52, ring = Math.max(pct > 0 ? 2 : 0, Math.min(100, pct) / 100 * C);
+  const C = 2 * Math.PI * 52, ring = Math.max(s.n > 0 ? 2 : 0, Math.min(100, s.n / WORLD_COUNTRIES * 100) / 100 * C);
+  const got = BADGES.filter(b => b.ok(s));
+  // badges débloqués d'abord, puis les suivants à viser
+  const badges = [...got, ...BADGES.filter(b => !b.ok(s))];
 
   $("progress").innerHTML = `
-    <h1>Mon exploration</h1>
+    <div class="row between"><h1>Mon exploration</h1><button class="btn small" id="btn-share">Partager</button></div>
     <div class="block hero">
       <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
         <circle class="track" cx="60" cy="60" r="52"/>
         <circle class="val" cx="60" cy="60" r="52" stroke-dasharray="${ring} ${C}"/>
-        <text x="60" y="54">${Math.round(n / WORLD_COUNTRIES * 100)} %</text><text class="sub" x="60" y="78">des pays</text>
+        <text x="60" y="54">${Math.round(s.n / WORLD_COUNTRIES * 100)} %</text><text class="sub" x="60" y="78">des pays</text>
       </svg>
       <div>
-        <div class="big">${fmtPct(pct)}<small> %</small></div>
+        <div class="big">${fmtPct(s.pct)}<small> %</small></div>
         <div class="muted">du monde exploré</div>
         <div class="small" style="margin-top:6px">${fmtInt(area)} km² parcourus</div>
       </div>
     </div>
     <div class="tiles">
-      <div class="tile"><b>${n}</b><span>pays sur ${WORLD_COUNTRIES}</span></div>
-      <div class="tile"><b>${state.r.size}</b><span>régions</span></div>
-      <div class="tile"><b>${contVisited}</b><span>continents sur 6</span></div>
+      <div class="tile"><b>${s.n}</b><span>pays sur ${WORLD_COUNTRIES}</span></div>
+      <div class="tile"><b>${s.regions}</b><span>régions</span></div>
+      <div class="tile"><b>${s.continents}</b><span>continents sur 6</span></div>
     </div>
     <div class="block goal">
       <div class="medal">${next || "★"}</div>
-      <p>${next ? `Prochain palier : <b>${next} pays</b>. Encore ${next - n} pays à découvrir.` : "Tu as visité tous les pays du monde. Chapeau !"}</p>
+      <p>${next ? `Prochain palier : <b>${next} pays</b>. Encore ${next - s.n} pays à découvrir.` : "Tu as visité tous les pays du monde. Chapeau !"}</p>
+    </div>
+    <div class="block">
+      <h3>Badges · ${got.length} / ${BADGES.length}</h3>
+      <div class="badges">${badges.map(b => `
+        <div class="badge ${b.ok(s) ? "on" : ""}"><div class="medal">${esc(b.m)}</div><b>${esc(b.name)}</b><span>${esc(b.desc)}</span></div>`).join("")}
+      </div>
     </div>
     <div class="block">
       <h3>Par continent</h3>
@@ -336,6 +499,58 @@ function renderProgress() {
       </div>
     </div>` : ""}`;
   $("progress").querySelectorAll("[data-open]").forEach(b => b.onclick = () => { showTab("map"); openCountry(b.dataset.open); });
+  $("btn-share").onclick = shareImage;
+}
+
+/* ---------- Image à partager ---------- */
+async function shareImage() {
+  const btn = $("btn-share");
+  btn.textContent = "Préparation…";
+  try { await document.fonts.ready; } catch (e) {}
+  const css = getComputedStyle(document.documentElement);
+  const v = n => css.getPropertyValue(n).trim();
+  const Wc = 1080, Hc = 1350;
+  const cv = document.createElement("canvas"); cv.width = Wc; cv.height = Hc;
+  const ctx = cv.getContext("2d");
+  const proj = d3.geoNaturalEarth1().fitExtent([[50, 380], [Wc - 50, 1060]], { type: "Sphere" });
+  const p = d3.geoPath(proj, ctx);
+  const s = stats();
+  ctx.fillStyle = v("--bg"); ctx.fillRect(0, 0, Wc, Hc);
+  ctx.beginPath(); p({ type: "Sphere" }); ctx.fillStyle = v("--ocean"); ctx.fill();
+  for (const f of countries) {
+    ctx.beginPath(); p(f);
+    ctx.fillStyle = state.c.has(f.id) ? v("--found-soft") : state.w.has(f.id) ? v("--wish-soft") : v("--fog");
+    ctx.fill();
+  }
+  ctx.fillStyle = v("--found");
+  for (const id of state.r.keys()) { const r = regionById.get(id); if (r) { ctx.beginPath(); p(r); ctx.fill(); } }
+  ctx.strokeStyle = v("--fog-line"); ctx.lineWidth = .6;
+  for (const f of countries) { ctx.beginPath(); p(f); ctx.stroke(); }
+  const display = "'Bricolage Grotesque', 'Avenir Next', system-ui, sans-serif", body = "'IBM Plex Sans', system-ui, sans-serif";
+  ctx.fillStyle = v("--ink-2"); ctx.font = `700 34px ${display}`; ctx.fillText("EXPLORA WORLD", 70, 110);
+  ctx.fillStyle = v("--ink"); ctx.font = `800 150px ${display}`;
+  const big = fmtPct(s.pct) + " %";
+  ctx.fillText(big, 64, 260);
+  const bw = ctx.measureText(big).width;
+  ctx.fillStyle = v("--ink-2"); ctx.font = `500 40px ${body}`; ctx.fillText("du monde", 84 + bw, 258);
+  ctx.fillStyle = v("--ink"); ctx.font = `600 44px ${body}`;
+  ctx.fillText(`${plural(s.n, "pays", "pays")} · ${plural(s.regions, "région", "régions")} · ${plural(s.continents, "continent", "continents")}`, 70, 330);
+  ctx.fillStyle = v("--ink-2"); ctx.font = `500 34px ${body}`;
+  const got = BADGES.filter(b => b.ok(s)).length;
+  ctx.fillText(`${got} badge${got > 1 ? "s" : ""} débloqué${got > 1 ? "s" : ""}`, 70, 1150);
+  const d = new Date();
+  ctx.fillText(`${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`, 70, 1200);
+  ctx.fillStyle = v("--found"); ctx.fillRect(70, 1250, 140, 10);
+
+  const blob = await new Promise(res => cv.toBlob(res, "image/png"));
+  btn.textContent = "Partager";
+  const file = new File([blob], "ma-carte-explora.png", { type: "image/png" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Ma carte Explora" }); return; }
+  } catch (e) { if (e.name === "AbortError") return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
 /* ---------- Onglet Voyages ---------- */
@@ -351,15 +566,21 @@ function tripItem(f) {
       </button>
       ${open ? `
       <div class="trip-body">
+        <label class="when">Première visite <input type="month" data-when value="${monthValue(state.c.get(f.id))}" max="${monthValue(Date.now())}"></label>
         <div class="trip-actions">
-          <button class="btn" data-act="map">Voir sur la carte</button>
-          <button class="btn danger" data-act="remove">Retirer ce pays</button>
+          <button class="btn small" data-act="map">Voir sur la carte</button>
+          <button class="btn small danger" data-act="remove">Retirer ce pays</button>
         </div>
         <ul class="checks">${(regionsBy.get(f.id) || []).map(r => `
           <li><label><input type="checkbox" data-r="${r.id}" ${state.r.has(r.id) ? "checked" : ""}><span>${esc(r.properties.n)}</span></label></li>`).join("")}
         </ul>
       </div>` : ""}
     </div>`;
+}
+function refreshCounters() {
+  drawMap();
+  $("m-pct").textContent = fmtPct(worldPct()) + " %";
+  $("m-countries").textContent = state.c.size;
 }
 function bindTrip(el) {
   const code = el.dataset.trip, f = byId.get(code);
@@ -376,21 +597,198 @@ function bindTrip(el) {
     b.dataset.armed = "1"; b.textContent = "Confirmer le retrait";
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "Retirer ce pays"; } }, 3500);
   };
+  const when = el.querySelector("[data-when]");
+  if (when) when.onchange = () => {
+    if (!when.value) return;
+    const [y, m] = when.value.split("-").map(Number);
+    state.c.set(code, new Date(y, m - 1, 15, 12).getTime());
+    save();
+  };
   el.querySelectorAll("[data-r]").forEach(cb => cb.onchange = () => {
     setRegion(cb.dataset.r, cb.checked);
     const v = visitedIn(code);
     el.querySelector(":scope > button .num").firstChild.textContent = `${v} / ${f.nreg} ${f.kind} `;
     el.querySelector(":scope > button .bar i").style.width = (f.nreg ? v / f.nreg * 100 : 0) + "%";
-    drawMap(); $("m-pct").textContent = fmtPct(worldPct()) + " %"; $("m-countries").textContent = state.c.size;
+    refreshCounters();
   });
 }
 function renderTrips() {
-  const list = [...state.c.keys()].map(id => byId.get(id)).filter(Boolean)
-    .sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
+  document.querySelectorAll("[data-tv]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tv === tripView));
+  $("add-q").placeholder = tripView === "wish" ? "Ajouter une envie (pays ou région)…" : "Ajouter un pays visité…";
+  $("add-q").closest(".add").hidden = tripView === "timeline";
   const box = $("trips");
-  box.innerHTML = list.length ? list.map(tripItem).join("")
-    : `<div class="empty-state">Aucun voyage pour l'instant.<br>Ajoute un pays ci-dessus ou depuis la carte.</div>`;
-  box.querySelectorAll("[data-trip]").forEach(bindTrip);
+  if (tripView === "visited") {
+    const list = [...state.c.keys()].map(id => byId.get(id)).filter(Boolean)
+      .sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
+    box.innerHTML = list.length ? list.map(tripItem).join("")
+      : `<div class="empty-state">Aucun voyage pour l'instant.<br>Ajoute un pays ci-dessus ou depuis la carte.</div>`;
+    box.querySelectorAll("[data-trip]").forEach(bindTrip);
+  } else if (tripView === "wish") {
+    const list = [...state.w.keys()].filter(place).sort((a, b) => placeName(a).localeCompare(placeName(b), "fr"));
+    box.innerHTML = list.length ? list.map(id => `
+      <div class="wish-row" data-w="${id}">
+        <div class="t"><b>${esc(placeName(id))}</b><small>${esc(placeSub(id))}</small></div>
+        <button class="btn small" data-act="map">Voir</button>
+        <button class="btn small primary" data-act="done">J'y suis allé</button>
+        <button class="icon-btn" data-act="del" aria-label="Retirer">✕</button>
+      </div>`).join("")
+      : `<div class="empty-state">Pas encore d'envies.<br>Ajoute les pays et régions qui te font rêver, ils apparaîtront en bleu sur la carte.</div>`;
+    box.querySelectorAll("[data-w]").forEach(el => {
+      const id = el.dataset.w;
+      el.querySelector('[data-act="map"]').onclick = () => { showTab("map"); isCountry(id) ? openCountry(id) : openCountry(placeCountry(id), id); };
+      el.querySelector('[data-act="done"]').onclick = () => { isCountry(id) ? setCountry(id, true) : setRegion(id, true); toast(placeName(id) + " exploré ✓"); update(); };
+      el.querySelector('[data-act="del"]').onclick = () => { toggleWish(id); update(); };
+    });
+  } else {
+    const items = [...state.c.entries()].filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1]);
+    const groups = d3.groups(items, ([, t]) => t ? new Date(t).getFullYear() : "Date inconnue");
+    box.innerHTML = items.length ? groups.map(([year, list]) => `
+      <div class="year">${year}</div>
+      <ul class="tl">${list.map(([id, t]) => `
+        <li><button class="btn small" style="border:0;padding:4px 0" data-open="${id}">${esc(byId.get(id).properties.n)}</button>
+        <span class="small">${t ? MONTHS[new Date(t).getMonth()] : ""}</span></li>`).join("")}
+      </ul>`).join("") + `<p class="small">Change la date d'un voyage dans « Visités », en ouvrant le pays.</p>`
+      : `<div class="empty-state">Ta frise se remplira avec tes voyages.</div>`;
+    box.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { showTab("map"); openCountry(b.dataset.open); });
+  }
+}
+document.querySelectorAll("[data-tv]").forEach(b => b.onclick = () => { tripView = b.dataset.tv; renderTrips(); });
+
+/* ---------- Onglet Projets ---------- */
+let editPlan = null;
+function planDates(p) {
+  if (!p.start) return "";
+  let s = p.end && p.end !== p.start ? `Du ${fmtDate(p.start)} au ${fmtDate(p.end)}` : `Le ${fmtDate(p.start)}`;
+  if (!p.done) {
+    const days = Math.round((new Date(p.start + "T12:00") - today()) / 864e5);
+    if (days > 1) s += ` · dans ${days} jours`;
+    else if (days === 1) s += " · demain";
+    else if (days === 0) s += " · aujourd'hui";
+  }
+  return s;
+}
+function newCountries(p) {
+  return new Set(p.stops.map(placeCountry).filter(c => c && !state.c.has(c))).size;
+}
+function renderPlans() {
+  const box = $("plans");
+  if (editPlan) return renderEditor(box);
+  const list = [...state.plans].sort((a, b) => a.done - b.done || (a.start || "9999").localeCompare(b.start || "9999"));
+  box.innerHTML = `
+    <div class="row between"><h1>Mes projets</h1>${list.length ? `<button class="btn small primary" id="p-new">Nouveau</button>` : ""}</div>
+    ${list.length ? `<div class="block">${list.map(p => {
+      const nc = newCountries(p), stops = p.stops.filter(place);
+      return `
+      <div class="plan" data-plan="${p.id}">
+        <div class="row between"><h4>${esc(p.name)}</h4>${p.done ? `<span class="chip new">Fait ✓</span>` : ""}</div>
+        ${planDates(p) ? `<div class="small">${esc(planDates(p))}</div>` : ""}
+        <div class="small">${plural(stops.length, "étape", "étapes")}${!p.done && nc ? ` · <b>${plural(nc, "nouveau pays", "nouveaux pays")}</b> à découvrir` : ""}</div>
+        ${stops.length ? `<div class="chips">${stops.slice(0, 8).map(id => `<span class="chip ${isVisited(id) ? "" : "blue"}">${esc(placeName(id))}</span>`).join("")}${stops.length > 8 ? `<span class="chip">+${stops.length - 8}</span>` : ""}</div>` : ""}
+        ${p.notes ? `<div class="small">${esc(p.notes).replace(/\n/g, "<br>")}</div>` : ""}
+        <div class="btns" style="margin-top:4px">
+          <button class="btn small" data-act="route" ${stops.length ? "" : "disabled"}>Voir l'itinéraire</button>
+          <button class="btn small" data-act="edit">Modifier</button>
+          ${!p.done && stops.length ? `<button class="btn small primary" data-act="done">C'est fait ✓</button>` : ""}
+        </div>
+      </div>`; }).join("")}</div>` : `
+    <div class="block empty-state">
+      <p style="margin-top:0">Prépare ton prochain voyage : choisis les étapes, les dates, et vois l'itinéraire sur la carte. Une fois rentré, un appui suffit pour tout ajouter à ta carte.</p>
+      <div class="btns" style="justify-content:center">
+        <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
+        <button class="btn" data-start="Tour du monde">Créer un tour du monde</button>
+      </div>
+    </div>`}`;
+  const start = name => { editPlan = { id: Date.now().toString(36), name, start: "", end: "", stops: [], notes: "", done: false, isNew: true }; renderPlans(); };
+  if ($("p-new")) $("p-new").onclick = () => start("Mon prochain trip");
+  box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
+  box.querySelectorAll("[data-plan]").forEach(el => {
+    const p = state.plans.find(x => x.id === el.dataset.plan);
+    el.querySelector('[data-act="route"]').onclick = () => showRoute(p.id);
+    el.querySelector('[data-act="edit"]').onclick = () => { editPlan = { ...p, stops: [...p.stops] }; renderPlans(); };
+    const done = el.querySelector('[data-act="done"]');
+    if (done) done.onclick = () => {
+      if (!done.dataset.armed) {
+        done.dataset.armed = "1"; done.textContent = "Ajouter les étapes à ma carte ?";
+        setTimeout(() => { if (done.isConnected) { delete done.dataset.armed; done.textContent = "C'est fait ✓"; } }, 4000);
+        return;
+      }
+      const ts = p.start ? new Date(p.start + "T12:00").getTime() : Date.now();
+      for (const id of p.stops) isCountry(id) ? setCountry(id, true, ts) : setRegion(id, true, ts);
+      p.done = true; save(); update();
+      toast(`${p.name} : ${plural(p.stops.length, "étape ajoutée", "étapes ajoutées")} à ta carte ✓`, 3000);
+    };
+  });
+}
+function renderEditor(box) {
+  const p = editPlan;
+  box.innerHTML = `
+    <div class="row between"><h1>${p.isNew ? "Nouveau projet" : "Modifier"}</h1></div>
+    <div class="block stack">
+      <label class="field">Nom<input id="e-name" value="${esc(p.name)}" maxlength="60"></label>
+      <div class="two">
+        <label class="field">Départ<input type="date" id="e-start" value="${esc(p.start)}"></label>
+        <label class="field">Retour<input type="date" id="e-end" value="${esc(p.end)}" min="${esc(p.start)}"></label>
+      </div>
+    </div>
+    <div class="block">
+      <h3>Étapes · ${p.stops.length}</h3>
+      <div class="add">
+        <input id="e-q" type="search" placeholder="Ajouter une étape (pays ou région)…" autocomplete="off" aria-label="Ajouter une étape">
+        <ul id="e-results" class="card results" hidden></ul>
+      </div>
+      <ol class="stops">${p.stops.map((id, i) => `
+        <li data-i="${i}"><span class="n">${i + 1}</span><span class="t">${esc(placeName(id))} <small>${esc(placeSub(id))}</small></span>
+          <button class="icon-btn" data-mv="-1" aria-label="Monter" ${i ? "" : "disabled"}>↑</button>
+          <button class="icon-btn" data-mv="1" aria-label="Descendre" ${i < p.stops.length - 1 ? "" : "disabled"}>↓</button>
+          <button class="icon-btn" data-rm aria-label="Retirer">✕</button></li>`).join("")}
+      </ol>
+      ${!p.stops.length ? `<p class="small" style="margin-top:10px">Ajoute les pays ou régions dans l'ordre du voyage.${state.w.size ? " Tu peux aussi reprendre tes envies :" : ""}</p>
+        ${state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Ajouter mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}` : ""}
+    </div>
+    <div class="block">
+      <label class="field">Notes<textarea id="e-notes" placeholder="Budget, idées, choses à voir…">${esc(p.notes)}</textarea></label>
+    </div>
+    <div class="btns" style="margin-top:0">
+      <button class="btn primary" id="e-save">Enregistrer</button>
+      <button class="btn" id="e-cancel">Annuler</button>
+      ${!p.isNew ? `<button class="btn danger" id="e-del">Supprimer</button>` : ""}
+    </div>`;
+  $("e-name").oninput = e => p.name = e.target.value;
+  $("e-start").onchange = e => { p.start = e.target.value; if (p.end && p.end < p.start) p.end = p.start; $("e-end").min = p.start; $("e-end").value = p.end; };
+  $("e-end").onchange = e => p.end = e.target.value;
+  $("e-notes").oninput = e => p.notes = e.target.value;
+  bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r) => {
+    const id = r || c;
+    if (!p.stops.includes(id)) p.stops.push(id);
+    renderPlans();
+    $("e-q").focus();
+  });
+  if ($("e-wishes")) $("e-wishes").onclick = () => { p.stops.push(...[...state.w.keys()].filter(id => place(id) && !p.stops.includes(id))); renderPlans(); };
+  box.querySelectorAll(".stops [data-i]").forEach(li => {
+    const i = +li.dataset.i;
+    li.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => {
+      const j = i + +b.dataset.mv;
+      [p.stops[i], p.stops[j]] = [p.stops[j], p.stops[i]];
+      renderPlans();
+    });
+    li.querySelector("[data-rm]").onclick = () => { p.stops.splice(i, 1); renderPlans(); };
+  });
+  $("e-save").onclick = () => {
+    const clean = { id: p.id, name: p.name.trim() || "Mon projet", start: p.start, end: p.end, stops: p.stops, notes: p.notes.trim(), done: p.done };
+    const i = state.plans.findIndex(x => x.id === p.id);
+    if (i >= 0) state.plans[i] = clean; else state.plans.push(clean);
+    save(); editPlan = null; update(); renderPlans();
+    toast("Projet enregistré ✓", 1400);
+  };
+  $("e-cancel").onclick = () => { editPlan = null; renderPlans(); };
+  if ($("e-del")) $("e-del").onclick = e => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer la suppression"; return; }
+    state.plans = state.plans.filter(x => x.id !== p.id);
+    if (routePlan === p.id) routePlan = null;
+    save(); editPlan = null; update(); renderPlans();
+    toast("Projet supprimé", 1400);
+  };
 }
 
 /* ---------- Recherches ---------- */
@@ -405,10 +803,11 @@ function searchHits(s, withRegions) {
   return hits.slice(0, 12);
 }
 function bindSearch(input, list, withRegions, label, pick) {
+  const regions = typeof withRegions === "function" ? withRegions : () => withRegions;
   input.addEventListener("input", () => {
     const s = norm(input.value.trim());
     if (!s) { list.hidden = true; return; }
-    const hits = searchHits(s, withRegions);
+    const hits = searchHits(s, regions());
     list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
       || `<li class="empty">Aucun résultat</li>`;
     list.hidden = false;
@@ -421,25 +820,35 @@ function bindSearch(input, list, withRegions, label, pick) {
   input.addEventListener("blur", () => setTimeout(() => list.hidden = true, 200));
 }
 bindSearch($("q"), $("results"), true, h => h.k, (c, r) => openCountry(c, r));
-bindSearch($("add-q"), $("add-results"), false, h => state.c.has(h.c) ? "déjà ajouté" : "ajouter", c => {
-  if (!state.c.has(c)) { setCountry(c, true); toast(byId.get(c).properties.n + " ajouté à tes voyages ✓"); }
-  openTrips.add(c);
-  update();
-  document.querySelector(`[data-trip="${c}"]`)?.scrollIntoView({ block: "center", behavior: reduceMotion() ? "auto" : "smooth" });
-});
+bindSearch($("add-q"), $("add-results"), () => tripView === "wish",
+  h => tripView === "wish" ? (state.w.has(h.r || h.c) ? "déjà en envie" : h.k) : (state.c.has(h.c) ? "déjà ajouté" : "ajouter"),
+  (c, r) => {
+    if (tripView === "wish") {
+      const id = r || c;
+      if (!state.w.has(id)) toggleWish(id);
+      update();
+      return;
+    }
+    if (!state.c.has(c)) { setCountry(c, true); toast(byId.get(c).properties.n + " ajouté à tes voyages ✓"); }
+    openTrips.add(c);
+    update();
+    document.querySelector(`[data-trip="${c}"]`)?.scrollIntoView({ block: "center", behavior: reduceMotion() ? "auto" : "smooth" });
+  });
 
 /* ---------- Onglets ---------- */
 function showTab(name) {
   tab = name;
   document.querySelectorAll(".tabbar [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
-  for (const v of ["map", "progress", "trips", "settings"]) $("view-" + v).hidden = v !== name;
+  for (const v of ["map", "progress", "trips", "plans", "settings"]) $("view-" + v).hidden = v !== name;
   if (name === "map" && countries.length && resize()) {
     svg.call(zoom.transform, d3.zoomIdentity); drawBase(); update();
     if (current) zoomTo(byId.get(current).main, 0);
   }
   if (name === "progress") renderProgress();
   if (name === "trips") renderTrips();
+  if (name === "plans") renderPlans();
   if (name === "settings") renderSettings();
+  if (name !== "map") $("view-" + name).scrollTop = 0;
 }
 document.querySelectorAll(".tabbar [data-tab]").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
@@ -447,8 +856,7 @@ document.querySelectorAll(".tabbar [data-tab]").forEach(b => b.onclick = () => s
 function applyTheme(t) {
   if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
-  const metas = document.querySelectorAll('meta[name="theme-color"]');
-  metas.forEach(m => {
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
     const own = m.media.includes("dark") ? "#0b1820" : "#c9d9e0";
     m.content = t === "dark" ? "#0b1820" : t === "light" ? "#c9d9e0" : own;
   });
@@ -481,17 +889,23 @@ $("import-file").onchange = async e => {
   if (!file) return;
   try {
     const d = JSON.parse(await file.text());
-    const c = toMap(d.c), r = toMap(d.r);
     let added = 0;
-    for (const [id, t] of c) if (byId.has(id) && !state.c.has(id)) { state.c.set(id, t); added++; }
-    for (const [id, t] of r) if (regionById.has(id) && !state.r.has(id)) state.r.set(id, t);
+    for (const [id, t] of toMap(d.c)) if (byId.has(id) && !state.c.has(id)) { state.c.set(id, t); added++; }
+    for (const [id, t] of toMap(d.r)) if (regionById.has(id) && !state.r.has(id)) state.r.set(id, t);
+    for (const [id, t] of toMap(d.w)) if (place(id) && !state.w.has(id)) state.w.set(id, t);
+    for (const p of cleanPlans(d.plans)) if (!state.plans.some(x => x.id === p.id)) state.plans.push(p);
     save(); update();
     toast(`Sauvegarde importée : ${added} nouveau${added > 1 ? "x" : ""} pays`);
   } catch (err) { toast("Ce fichier n'est pas une sauvegarde Explora."); }
 };
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
-  if (b.dataset.armed) { state = { c: new Map(), r: new Map() }; save(); openTrips.clear(); current = null; selected = null; update(); svg.call(zoom.transform, d3.zoomIdentity); b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return; }
+  if (b.dataset.armed) {
+    state = { c: new Map(), r: new Map(), w: new Map(), plans: [] }; save();
+    openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
+    update(); svg.call(zoom.transform, d3.zoomIdentity);
+    b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;
+  }
   b.dataset.armed = "1"; b.textContent = "Appuie encore pour tout effacer";
   setTimeout(() => { delete b.dataset.armed; b.textContent = "Tout effacer"; }, 4000);
 };
@@ -540,7 +954,7 @@ addEventListener("resize", () => {
   if (current) zoomTo(byId.get(current).main, 0);
 });
 
-load().catch(() => { $("loading").textContent = "La carte n'a pas pu se charger. Recharge la page."; });
+load().catch(err => { console.error(err); $("loading").textContent = "La carte n'a pas pu se charger. Recharge la page."; });
 })();
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {

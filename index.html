@@ -55,12 +55,21 @@
     <section class="view page" id="view-trips" aria-label="Voyages" hidden>
       <div class="page-in">
         <h1>Mes voyages</h1>
+        <div class="seg" role="group" aria-label="Affichage">
+          <button data-tv="visited" aria-pressed="true">Visités</button>
+          <button data-tv="wish" aria-pressed="false">Envies</button>
+          <button data-tv="timeline" aria-pressed="false">Frise</button>
+        </div>
         <div class="add">
           <input id="add-q" type="search" placeholder="Ajouter un pays…" autocomplete="off" aria-label="Ajouter un pays">
           <ul id="add-results" class="card results" hidden></ul>
         </div>
         <div class="block" id="trips"></div>
       </div>
+    </section>
+
+    <section class="view page" id="view-plans" aria-label="Projets" hidden>
+      <div class="page-in" id="plans"></div>
     </section>
 
     <section class="view page" id="view-settings" aria-label="Réglages" hidden>
@@ -85,7 +94,7 @@
         </div>
         <div class="block">
           <h3>À propos</h3>
-          <p class="small">Explora World · version 2<br>Frontières : Natural Earth (domaine public).</p>
+          <p class="small">Explora World · version 3<br>Frontières : Natural Earth (domaine public).</p>
         </div>
       </div>
     </section>
@@ -101,6 +110,9 @@
     </button>
     <button role="tab" data-tab="trips" aria-selected="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5"/></svg>Voyages
+    </button>
+    <button role="tab" data-tab="plans" aria-selected="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg>Projets
     </button>
     <button role="tab" data-tab="settings" aria-selected="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Réglages
