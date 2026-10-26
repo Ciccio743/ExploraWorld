@@ -1,11 +1,14 @@
 #!/bin/sh
 # Regénère data/ à partir de Natural Earth (domaine public).
-#   sh tools/build-data.sh <dossier-sources>
+#   sh tools/build-data.sh <dossier-sources> [dossier-geoboundaries]
 # Le dossier doit contenir, téléchargés depuis github.com/nvkelso/natural-earth-vector (geojson/) :
 #   ne_10m_admin_1_states_provinces.geojson  et  ne_50m_admin_0_countries.geojson
+# Le second dossier contient <CODE>.geojson pour chaque pays de tools/adm2-countries.txt, téléchargé depuis
+#   media.githubusercontent.com/media/wmgeolab/geoBoundaries/main/releaseData/gbOpen/<CODE>/ADM2/geoBoundaries-<CODE>-ADM2_simplified.geojson
 # Nécessite node et mapshaper (npm i -g mapshaper).
 set -e
 SRC=$1
+GB=$2
 OUT=$(dirname "$0")/../data
 TMP=$(mktemp -d)
 
@@ -21,8 +24,30 @@ require("fs").writeFileSync(process.argv[2], JSON.stringify(Object.entries(m).ma
 node "$(dirname "$0")/prep-regions.js" "$SRC/ne_10m_admin_1_states_provinces.geojson" "$TMP/regions-src.json" "$OUT/merged.json"
 mapshaper "$TMP/regions-src.json" -dissolve id copy-fields=n,t,g -o "$TMP/regions.json" format=geojson
 
+# pays aux régions trop grandes : subdivisions geoBoundaries découpées dans le contour Natural Earth
+if [ -n "$GB" ]; then
+  mkdir -p "$TMP/adm2"
+  grep -v '^#' "$(dirname "$0")/adm2-countries.txt" | while read code type gbcode; do
+    [ -n "$code" ] || continue
+    d="$TMP/adm2/$code"; mkdir -p "$d"
+    mapshaper "$TMP/regions.json" -filter "g === '$code'" -dissolve g -o "$d/outline.json" format=geojson 2>/dev/null
+    mapshaper "$GB/${gbcode:-$code}.geojson" -clip "$d/outline.json" -filter-fields shapeName -o "$d/clipped.json" format=geojson precision=0.00001 2>/dev/null
+    mapshaper "$d/outline.json" -erase "$d/clipped.json" -explode -o "$d/slivers.json" format=geojson precision=0.00001 2>/dev/null || true
+    node "$(dirname "$0")/adm2-assign.js" "$code" "$type" "$d/clipped.json" "$d/slivers.json" "$d/out.json"
+  done
+  node -e '
+    const fs = require("fs"), [regions, dir, out] = process.argv.slice(1);
+    const fc = JSON.parse(fs.readFileSync(regions, "utf8"));
+    const done = fs.readdirSync(dir).filter(c => fs.existsSync(dir + "/" + c + "/out.json"));
+    fc.features = fc.features.filter(f => !done.includes(f.properties.g));
+    for (const c of done) fc.features.push(...JSON.parse(fs.readFileSync(dir + "/" + c + "/out.json", "utf8")).features);
+    fs.writeFileSync(out, JSON.stringify(fc));
+  ' "$TMP/regions.json" "$TMP/adm2" "$TMP/regions-adm2.json"
+  mapshaper "$TMP/regions-adm2.json" -dissolve id copy-fields=n,t,g -o "$TMP/regions.json" format=geojson force
+fi
+
 # 1) carte du monde légère : régions + pays fusionnés depuis les mêmes contours (frontières identiques)
-mapshaper "$TMP/regions.json" -simplify 7% keep-shapes \
+mapshaper "$TMP/regions.json" -simplify ${WORLD_SIMPLIFY:-7%} keep-shapes \
   -rename-layers regions \
   -dissolve g + name=countries \
   -join "$TMP/names.json" keys=g,g target=countries \

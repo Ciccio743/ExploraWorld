@@ -25,7 +25,7 @@ const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet"
 
 const $ = id => document.getElementById(id);
 // à augmenter quand les fichiers de data/ changent, pour que les téléphones ne gardent pas l'ancienne version
-const DATA_VERSION = 3;
+const DATA_VERSION = 4;
 const dataUrl = file => "data/" + file + "?v=" + DATA_VERSION;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -85,20 +85,26 @@ if (!store.get("explora-dates-v2")) {
 }
 
 /* ---------- Chargement ---------- */
-// certains pays trop découpés ont été regroupés en grandes régions : on reporte les anciens marquages
-function migrate(merged) {
+// découpages qui ont changé : merged = ancienne région → région regroupée,
+// split = ancienne grande région → ses nouvelles subdivisions (toutes reprises, à décocher au besoin)
+function migrate(merged, split) {
   let changed = false;
+  const targets = id => split[id] || (merged[id] ? [merged[id]] : null);
   for (const key of ["r", "w"]) {
     for (const [id, ts] of [...state[key]]) {
-      const to = merged[id];
+      const to = targets(id);
       if (!to) continue;
       state[key].delete(id);
-      state[key].set(to, Math.min(ts || Infinity, state[key].get(to) || Infinity) === Infinity ? 0 : Math.min(ts || Infinity, state[key].get(to) || Infinity));
+      for (const t of to) {
+        const old = state[key].get(t);
+        state[key].set(t, old === undefined ? ts : (old && ts ? Math.min(old, ts) : old || ts));
+      }
       changed = true;
     }
   }
   for (const p of state.plans) {
-    const stops = [...new Set(p.stops.map(id => merged[id] || id))];
+    // une étape sur une région redécoupée devient le pays entier
+    const stops = [...new Set(p.stops.map(id => split[id] ? split[id][0].split("-")[0] : merged[id] || id))];
     if (stops.join() !== p.stops.join()) { p.stops = stops; changed = true; }
   }
   if (changed) save();
@@ -119,11 +125,12 @@ function kindOf(code) {
 
 async function load() {
   // carte légère du monde : pays et régions tirés des mêmes contours, donc frontières identiques
-  const [world, merged] = await Promise.all([
+  const [world, merged, split] = await Promise.all([
     fetch(dataUrl("world.json")).then(r => r.json()),
-    fetch(dataUrl("merged.json")).then(r => r.json()).catch(() => ({}))
+    fetch(dataUrl("merged.json")).then(r => r.json()).catch(() => ({})),
+    fetch(dataUrl("split.json")).then(r => r.json()).catch(() => ({}))
   ]);
-  migrate(merged);
+  migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
   for (const f of countries) byId.set(f.id, f);
   for (const r of topojson.feature(world, world.objects.regions).features) {

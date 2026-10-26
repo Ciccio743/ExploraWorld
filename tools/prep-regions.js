@@ -77,8 +77,7 @@ const ukByName = {};
 for (const [county, names] of Object.entries(UK)) for (const n of names) ukByName[n] = county;
 const GROUP = {
   GBR: p => /London Borough|City Corporation/.test(p.type_en) && p.geonunit === "England" ? "Greater London" : ukByName[p.name] || p.name,
-  ITA: p => p.region, ESP: p => p.region, SVN: p => p.region, LVA: p => p.region,
-  UGA: p => p.region, AZE: p => p.region, MLT: p => p.region, PHL: p => p.region, BFA: p => p.region
+  SVN: p => p.region, LVA: p => p.region, UGA: p => p.region, AZE: p => p.region, MLT: p => p.region
 };
 const FR = {
   "England": "Angleterre", "Scotland": "Écosse", "Wales": "Pays de Galles", "Northern Ireland": "Irlande du Nord",
