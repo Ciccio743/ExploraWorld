@@ -1,6 +1,7 @@
 (() => {
 const WORLD_COUNTRIES = 195; // membres de l'ONU + Vatican + Palestine
 const CAT = { c: "culturel", n: "naturel", m: "mixte" };
+const CAT_IC = { c: "🏛️", n: "🌿", m: "🏞️" };
 const MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 195];
 const KIND = {
   "Metropolitan department": "départements", "Overseas department": "départements", "Department": "départements",
@@ -634,7 +635,7 @@ function renderSheet() {
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       ${site ? `
       <div class="pick">
-        <div class="name"><b>${esc(site.n)}</b><small>${site.wonder ? (site.hon ? "Merveille honoraire du monde" : "Une des 7 merveilles du monde") : `Patrimoine mondial · ${CAT[site.cat]} · ${site.year}`}${state.u.has(site.id) ? " · visité" : ""}</small></div>
+        <div class="name"><b>${esc(site.n)}</b><small>${site.wonder ? (site.hon ? "Merveille honoraire du monde" : "Une des 7 merveilles du monde") : `Patrimoine mondial · ${CAT_IC[site.cat]} ${CAT[site.cat]} · ${site.year}`}${state.u.has(site.id) ? " · visité" : ""}</small></div>
         <button class="btn small ${state.u.has(site.id) ? "done" : "primary"}" id="s-site">${state.u.has(site.id) ? "Retirer" : "Marquer visité"}</button>
       </div>
       <div class="photo" id="s-photo" hidden></div>` : sel ? `
@@ -767,8 +768,10 @@ function renderProgress() {
       <h3>Patrimoine mondial UNESCO</h3>
       <div class="row between" style="margin-bottom:6px"><span><b class="num">${seen.length}</b> sites visités</span><span class="num muted">sur ${all.length}</span></div>
       <div class="bar"><i style="width:${Math.max(seen.length ? 1 : 0, seen.length / all.length * 100)}%"></i></div>
-      <div class="tiles" style="margin-top:12px">${byCat.map(([c, v, t]) => `<div class="tile"><b>${v}</b><span>${CAT[c]}${v > 1 ? "s" : ""} sur ${t}</span></div>`).join("")}</div>
-      ${seen.length ? `<ul class="sites">${seen.slice(0, 12).map(st => `<li><button data-site="${st.id}">${flag(siteHome(st))} ${esc(st.n)}</button></li>`).join("")}</ul>`
+      <div class="tiles" style="margin-top:12px">${byCat.map(([c, v, t]) => `<div class="tile cat-${c}"><b>${v}<small> / ${t}</small></b><span>${CAT_IC[c]} ${cap(CAT[c])}${v > 1 ? "s" : ""}</span></div>`).join("")}</div>
+      ${seen.length ? byCat.filter(([, v]) => v).map(([c, v]) => `
+      <h4 class="cat-h cat-${c}">${CAT_IC[c]} ${cap(CAT[c])}${v > 1 ? "s" : ""} · ${v}</h4>
+      <ul class="sites">${seen.filter(st => st.cat === c).map(st => `<li><button data-site="${st.id}">${flag(siteHome(st))} ${esc(st.n)}</button></li>`).join("")}</ul>`).join("")
         : `<p class="small" style="margin:10px 0 0">Ouvre un pays sur la carte : ses sites du patrimoine mondial apparaissent en losanges ◆. Touche-en un pour le marquer.</p>`}
     </div>`; })() : ""}
     <div class="block goal">
