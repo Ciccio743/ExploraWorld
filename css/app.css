@@ -132,6 +132,7 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .cname { min-width: 0; flex: 1 1 auto; }
 .cname b { display: block; font-family: var(--f-display); font-weight: 800; font-size: 19px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cname small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.cname small .ok { color: var(--found); font-weight: 600; }
 .btn.more { width: 16px; font-size: 16px; line-height: 1; }
 .bar.thin { height: 4px; margin-top: 10px; }
 .sheet .pick { margin-top: 10px; padding: 8px 10px; }
@@ -145,6 +146,7 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .pick .name { flex: 1 1 auto; min-width: 0; }
 .pick .name b { display: block; font-size: 16px; }
 .pick .name small { color: var(--ink-2); }
+.pick.ask { background: transparent; border: 1px dashed var(--found); }
 .switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 14px; cursor: pointer; user-select: none; }
 .switch input { appearance: none; -webkit-appearance: none; width: 42px; height: 24px; border-radius: 12px; background: var(--fog-line); position: relative; margin: 0; cursor: pointer; flex: none; transition: background .2s; }
 .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }

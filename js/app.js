@@ -46,6 +46,7 @@ let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
 let sheetMore = false; // panneau du pays déplié
+let askRegions = null; // pays tout juste marqué : on propose d'en choisir les régions
 let me = null, watchId = null;
 
 /* ---------- Sauvegarde locale ---------- */
@@ -507,8 +508,8 @@ function renderSheet() {
     sheet.innerHTML = `
       <div class="row cmp">
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
-        <div class="cname grow"><b>${esc(f.properties.n)}</b><small>${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
-        ${n > 1 ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
+        <div class="cname grow"><b>${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
+        ${n > 1 && (been || sel) ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
@@ -517,6 +518,10 @@ function renderSheet() {
         <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
         <button class="btn small ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
+      </div>` : askRegions === current && n > 1 && !v ? `
+      <div class="pick ask">
+        <div class="name"><b>Quel${fem ? "les" : "s"} ${esc(f.kind)} ?</b><small>Touche sur la carte ${fem ? "celles" : "ceux"} où tu es allé.</small></div>
+        <button class="btn small" id="s-later">Plus tard</button>
       </div>` : ""}
       ${sheetMore ? `
       <label class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
@@ -526,7 +531,13 @@ function renderSheet() {
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
-    if ($("s-been")) $("s-been").onclick = () => { setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0); update(); };
+    if ($("s-been")) $("s-been").onclick = () => {
+      setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0);
+      // une fois le pays marqué, on propose de préciser les régions
+      askRegions = !been && n > 1 ? current : null;
+      update();
+    };
+    if ($("s-later")) $("s-later").onclick = () => { askRegions = null; renderSheet(); };
     if ($("s-unbeen")) $("s-unbeen").onclick = () => { if (confirm(`Retirer ${f.properties.n} et toutes ses régions de ta carte ?`)) { setCountry(current, false); update(); } };
     $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
     if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
