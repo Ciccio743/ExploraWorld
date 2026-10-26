@@ -213,9 +213,16 @@ function cityStop(id) {
   return cityStops.get(id);
 }
 const cityId = (c, r) => `@${r}|${c.n.replace(/\|/g, " ")}|${c.lon}|${c.lat}`;
-const place = id => isCity(id) ? cityStop(id) : byId.get(id) || regionById.get(id);
+// ou un site du patrimoine mondial : « #site|région »
+const isSite = id => id[0] === "#";
+const siteOfStop = id => siteById.get(id.slice(1).split("|")[0]);
+function siteStop(id) {
+  const st = siteOfStop(id);
+  return st && { r: id.split("|")[1], lon: st.lon, lat: st.lat, site: st, properties: { n: st.n } };
+}
+const place = id => isCity(id) ? cityStop(id) : isSite(id) ? siteStop(id) : byId.get(id) || regionById.get(id);
 const placeName = id => place(id)?.properties.n || id;
-const placeRegion = id => isCity(id) ? cityStop(id).r : id;
+const placeRegion = id => isCity(id) ? cityStop(id).r : isSite(id) ? id.split("|")[1] : id;
 const placeCountry = id => isCountry(id) ? id : regionById.get(placeRegion(id))?.code;
 function placeSub(id) {
   if (isCountry(id)) return "";
@@ -225,7 +232,7 @@ function placeSub(id) {
   return c; // pour une ville, le pays suffit (les noms de régions détaillées sont souvent en langue locale)
 }
 function centroid(id) {
-  if (isCity(id)) { const c = cityStop(id); return [c.lon, c.lat]; }
+  if (isCity(id) || isSite(id)) { const c = place(id); return [c.lon, c.lat]; }
   const f = byId.get(id);
   return d3.geoCentroid(f ? f.main : regionById.get(id));
 }
@@ -1263,7 +1270,7 @@ function renderPlans() {
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
     const p = state.plans.find(x => x.id === el.dataset.plan);
-    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); tripCam = null; renderPlans(); $("view-plans").scrollTo(0, 0); };
+    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); tripCam = null; tripFocus = null; renderPlans(); $("view-plans").scrollTo(0, 0); };
     const done = el.querySelector('[data-act="done"]');
     if (done) done.onclick = () => {
       if (!done.dataset.armed) {
@@ -1272,7 +1279,10 @@ function renderPlans() {
         return;
       }
       const ts = p.start ? new Date(p.start + "T12:00").getTime() : 0;
-      for (const id of p.stops.filter(place)) isCountry(id) ? setCountry(id, true, ts) : setRegion(placeRegion(id), true, ts);
+      for (const id of p.stops.filter(place)) {
+        if (isSite(id)) state.u.set(siteOfStop(id).id, ts);
+        isCountry(id) ? setCountry(id, true, ts) : regionById.has(placeRegion(id)) ? setRegion(placeRegion(id), true, ts) : setCountry(placeCountry(id), true, ts);
+      }
       p.done = true; save(); update();
       toast(`${p.name} : ${plural(p.stops.length, "étape ajoutée", "étapes ajoutées")} à ta carte ✓`, 3000);
     };
@@ -1476,6 +1486,7 @@ function regionsOnRoute(coords) {
 }
 // Vue de la carte du trip : gardée tant qu'on modifie le même trip, pour que la carte ne saute pas
 let tripCam = null, tripBig = false;
+let tripFocus = null, tripFocusGo = false; // pays ouvert sur la carte du trip (ses régions et ses sites)
 function addTripStop(p, id) {
   if (p.stops[p.stops.length - 1] === id) return false;
   p.stops.push(id); p.nights.push(1); p.modes.push("");
@@ -1540,6 +1551,26 @@ function drawTripMap(p) {
   g.selectAll(".tm-land").classed("on", d => onIds.has(d.id) && !(regionsBy.get(d.id) || []).length);
   g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path")
     .attr("class", d => "tm-reg" + (onIds.has(d.id) || onIds.has(d.code) ? " on" : passIds.has(d.id) ? " pass" : "")).attr("d", path);
+  // pays touché : on l'ouvre comme sur la carte principale
+  const addStop = (id, name) => {
+    if (!addTripStop(p, id)) return;
+    commitTrip(); renderPlans();
+    toast(`${name} : étape ${p.stops.length} ✓`, 1200);
+  };
+  g.selectAll(".tm-land").on("click", (e, d) => {
+    e.stopPropagation();
+    if (tripFocus === d.id) return;
+    tripFocus = d.id; tripFocusGo = true;
+    // on attend les contours détaillés (une seconde au plus) avant de zoomer
+    Promise.race([ensureDetail(d.id), new Promise(r => setTimeout(r, 1200))]).then(() => { if (tripFocus === d.id && $("trip-map")) drawTripMap(p); });
+  });
+  const hint = document.querySelector(".tm-hint");
+  if (hint) hint.textContent = tripFocus ? "Touche une région, une ville ou un site ◆ pour l'ajouter" : "Touche un pays pour l'ouvrir, ou une ville";
+  const det = tripFocus && details.get(tripFocus);
+  const focusRegions = tripFocus ? (det && det.regions ? det.regions : regionsBy.get(tripFocus) || []) : [];
+  g.selectAll(".tm-freg").data(focusRegions, d => d.id).join("path").attr("class", "tm-freg").attr("d", path)
+    .on("click", (e, d) => { e.stopPropagation(); addStop(d.id, d.properties.n); });
+  if (tripFocus) g.append("path").datum(det && det.outline ? det.outline : byId.get(tripFocus)).attr("class", "tm-focus").attr("d", path);
   const P = pts.map(d => proj(d));
   g.selectAll(".route").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i), legInfo(p, i).road])).join("path")
     .attr("class", d => "route m-" + d[2]).attr("d", d => d[3] ? d3.line()(d[3].map(c => proj(c))) : legPath(d[0], d[1], d[2]));
@@ -1570,13 +1601,23 @@ function drawTripMap(p) {
       m.on("click", (e, d) => {
         e.stopPropagation();
         const r = regionIn(d.c.code, d.c.lon, d.c.lat);
-        if (!addTripStop(p, cityId(d.c, r ? r.id : d.c.code))) return;
-        commitTrip(); renderPlans();
-        toast(`${d.c.n} : étape ${p.stops.length} ✓`, 1200);
+        addStop(cityId(d.c, r ? r.id : d.c.code), d.c.n);
       });
       return m;
     }).attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / t.k})`);
   };
+  const gS = g.append("g");
+  const sitesT = (tripFocus ? sitesBy.get(tripFocus) || [] : []).map(st => { const [x, y] = proj([st.lon, st.lat]); return { x, y, st }; });
+  gS.selectAll(".tm-site").data(sitesT).join(enter => {
+    const m = enter.append("g").attr("class", d => "tm-site site" + (d.st.wonder ? " wonder" : "") + (state.u.has(d.st.id) ? " visited" : ""));
+    m.append("circle").attr("class", "hit").attr("r", 14);
+    m.append("path").attr("d", d => d.st.wonder ? STAR : "M0,-7L7,0L0,7L-7,0Z");
+    return m;
+  }).on("click", (e, d) => {
+    e.stopPropagation();
+    const r = regionIn(siteHome(d.st), d.st.lon, d.st.lat);
+    addStop(`#${d.st.id}|${r ? r.id : siteHome(d.st)}`, short(d.st.n));
+  });
   const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, i: ids[j], name: placeName(p.stops[ids[j]]) })))
     .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; })
     .on("click", (e, d) => { e.stopPropagation(); stopMenu(p, d.i); });
@@ -1586,6 +1627,7 @@ function drawTripMap(p) {
     marks.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
     planes.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk}) rotate(${d.r})`);
     gC.selectAll(".tm-city").attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
+    gS.selectAll(".tm-site").attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
     // étiquette à gauche quand une autre étape est juste à droite
     const left = d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18);
     marks.select(".lbl").attr("x", d => left(d) ? -15 : 15).attr("text-anchor", d => left(d) ? "end" : "start");
@@ -1596,6 +1638,15 @@ function drawTripMap(p) {
   svgT.call(zoomT).on("dblclick.zoom", null);
   svgT.call(zoomT.transform, cam.t);
   drawCities(cam.t);
+  // toucher la mer referme le pays ouvert
+  svgT.on("click", () => { if (tripFocus) { tripFocus = null; drawTripMap(p); } });
+  if (tripFocusGo && tripFocus && byId.get(tripFocus)) {
+    tripFocusGo = false;
+    const [[x0, y0], [x1, y1]] = path.bounds(mainParts(byId.get(tripFocus)));
+    const kk = Math.min(600, .85 / Math.max((x1 - x0) / W, (y1 - y0) / (H - padT - padB)));
+    const t = d3.zoomIdentity.translate(W / 2 - kk * (x0 + x1) / 2, (padT + H - padB) / 2 - kk * (y0 + y1) / 2).scale(kk);
+    svgT.transition().duration(reduceMotion() ? 0 : 650).call(zoomT.transform, t);
+  }
 }
 
 /* ---------- Recherches ---------- */

@@ -433,3 +433,10 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .tf-search input { box-shadow: var(--shadow); padding: 11px 14px; }
 .tf-search .results { max-height: 45vh; }
 .trip-open .toast { top: auto; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+.tm-reg { pointer-events: none; }
+.tm-land { cursor: pointer; }
+.tm-freg { fill: transparent; stroke: var(--fog-line); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: pointer; }
+.tm-freg:active { fill: var(--trip, var(--me)); fill-opacity: .3; }
+.tm-focus { fill: none; stroke: var(--ink-2); stroke-width: 1.6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.tm-site { cursor: pointer; }
+.tm-site .hit { fill: transparent; }
