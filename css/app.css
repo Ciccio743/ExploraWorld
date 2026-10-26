@@ -397,3 +397,22 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .swatch { width: 30px; height: 30px; border-radius: 50%; background: var(--c); border: 3px solid var(--bg); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
 .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
 .tdot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: 2px; }
+.cal { padding: 16px; }
+.cal-sum { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.cal-sum button { font: inherit; font-size: 15px; font-weight: 600; text-align: left; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; cursor: pointer; }
+.cal-sum button small { display: block; font-size: 11px; font-weight: 500; color: var(--ink-2); }
+.cal-sum button.on { border-color: var(--trip, var(--me)); box-shadow: 0 0 0 1px var(--trip, var(--me)); }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.cal-head .icon-btn { font-size: 24px; width: 40px; height: 40px; }
+.cal-title { font: 700 17px var(--f-body); color: var(--ink); background: none; border: 0; padding: 6px 10px; border-radius: 10px; cursor: pointer; }
+.cal-title span { font-size: 12px; color: var(--ink-2); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.cal-grid b { font-size: 11px; font-weight: 600; color: var(--ink-2); padding: 4px 0; }
+.cal-grid button { font: inherit; font-size: 15px; color: var(--ink); background: none; border: 0; height: 40px; border-radius: 10px; cursor: pointer; }
+.cal-grid button.today { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
+.cal-grid button.in { background: color-mix(in srgb, var(--trip, var(--me)) 18%, transparent); border-radius: 0; }
+.cal-grid button.s, .cal-grid button.e { background: var(--trip, var(--me)); color: #fff; font-weight: 700; }
+.cal-months { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.cal-months button { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; height: 42px; cursor: pointer; }
+.cal-months button.on { border-color: var(--trip, var(--me)); font-weight: 700; }
+.cal-hint { margin: 8px 0 0; }
