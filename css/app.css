@@ -346,8 +346,6 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 /* Page d'un trip */
 .trip-top { gap: 6px; margin-bottom: 12px; }
 .trip-top .icon-btn { font-size: 26px; line-height: 1; }
-.trip-name { flex: 1; min-width: 0; font: 800 26px/1.2 var(--f-display); color: var(--ink); background: none; border: 0; border-bottom: 1px dashed transparent; padding: 2px 0; }
-.trip-name:focus { outline: none; border-bottom-color: var(--line); }
 .trip-map { position: relative; height: 270px; border-radius: 18px; overflow: hidden; background: var(--ocean); border: 1px solid var(--line); margin-bottom: 12px; }
 .trip-map svg { width: 100%; height: 100%; display: block; touch-action: none; }
 .trip-map p { position: absolute; inset: auto 0 14px; margin: 0; text-align: center; font-size: 13px; color: var(--ink-2); pointer-events: none; }
@@ -375,3 +373,8 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .field input[type="date"] { width: 100%; min-width: 0; box-sizing: border-box; -webkit-appearance: none; appearance: none; }
 .tm-plane { fill: var(--me); font-size: 16px; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
 .tm-credit { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--ink-2); background: color-mix(in srgb, var(--bg) 70%, transparent); padding: 1px 5px; border-radius: 6px; pointer-events: none; }
+.three { display: grid; grid-template-columns: .8fr 1.4fr 1fr; gap: 8px; }
+.three > * { min-width: 0; }
+.date-btn { font: inherit; font-size: 15px; color: var(--ink); padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); text-align: left; cursor: pointer; width: 100%; }
+.date-btn.empty { color: var(--ink-2); }
+.trip-top h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

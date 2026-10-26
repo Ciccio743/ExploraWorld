@@ -668,6 +668,37 @@ function pickMonth(v, title = "Date de visite") {
     });
   });
 }
+// Même principe pour un jour (dates d'un trip)
+const isoDay = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+function pickDay(v, title, clearable = !!v) {
+  return new Promise(done => {
+    const now = new Date(), d = v ? new Date(v + "T12:00") : now;
+    const back = document.createElement("div");
+    back.className = "mp-back";
+    back.innerHTML = `<div class="card mp" role="dialog" aria-label="${esc(title)}">
+      <h3>${esc(title)}</h3>
+      <div class="three">
+        <select id="mp-d" aria-label="Jour">${d3.range(1, 32).map(n => `<option ${n === d.getDate() ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <select id="mp-m" aria-label="Mois">${MONTHS.map((n, i) => `<option value="${i + 1}" ${i === d.getMonth() ? "selected" : ""}>${cap(n)}</option>`).join("")}</select>
+        <select id="mp-y" aria-label="Année">${d3.range(Math.min(d.getFullYear(), now.getFullYear() - 1), now.getFullYear() + 5).map(y => `<option ${y === d.getFullYear() ? "selected" : ""}>${y}</option>`).join("")}</select>
+      </div>
+      <div class="btns">
+        <button class="btn primary" data-mp="ok">Enregistrer</button>
+        ${clearable ? `<button class="btn" data-mp="none">Effacer la date</button>` : ""}
+        <button class="btn" data-mp="cancel">Annuler</button>
+      </div></div>`;
+    document.body.append(back);
+    const close = r => { back.remove(); done(r); };
+    back.onclick = e => { if (e.target === back) close(null); };
+    back.querySelectorAll("[data-mp]").forEach(b => b.onclick = () => {
+      if (b.dataset.mp === "cancel") return close(null);
+      if (b.dataset.mp === "none") return close("");
+      const y = +$("mp-y").value, m = +$("mp-m").value;
+      const day = Math.min(+$("mp-d").value, new Date(y, m, 0).getDate()); // pas de 31 février
+      close(isoDay(new Date(y, m - 1, day, 12)));
+    });
+  });
+}
 function setVisitMonth(code, value) {
   if (!state.c.has(code)) return;
   state.c.set(code, monthTs(value));
@@ -1244,7 +1275,7 @@ function renderTrip(box) {
     `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
   box.innerHTML = `
     <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
-      <input id="e-name" class="trip-name" value="${esc(p.name)}" maxlength="60" aria-label="Nom du trip"></div>
+      <h1 class="grow" id="e-title">${esc(p.name)}</h1></div>
     <div class="trip-map"><svg id="trip-map" aria-label="Carte du trip"></svg>
       ${p.stops.length ? "" : `<p>Ajoute tes étapes : l'itinéraire s'affichera ici.</p>`}
       ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}</div>
@@ -1253,8 +1284,9 @@ function renderTrip(box) {
       <span><b>${fmtKm(t.km, true)}</b> au total</span>${t.flights ? `<span><b>${t.flights}</b> ${t.flights > 1 ? "vols" : "vol"}</span>` : ""}</div>` : ""}
     <div class="block">
       <div class="two">
-        <label class="field">Départ<input type="date" id="e-start" value="${esc(p.start)}"></label>
-        <label class="field">Retour<input type="date" id="e-end" value="${esc(p.end)}" min="${esc(p.start)}"></label>
+        <label class="field" style="grid-column: 1 / -1">Nom du trip<input id="e-name" value="${esc(p.name)}" maxlength="60" placeholder="Ex. : Road trip en Italie" enterkeyhint="done"></label>
+        <div class="field">Départ<button type="button" class="date-btn ${p.start ? "" : "empty"}" id="e-start">${p.start ? fmtDate(p.start) : "Choisir"}</button></div>
+        <div class="field">Retour<button type="button" class="date-btn ${p.end ? "" : "empty"}" id="e-end">${p.end ? fmtDate(p.end) : "Choisir"}</button></div>
       </div>
     </div>
     <div class="block">
@@ -1284,9 +1316,24 @@ function renderTrip(box) {
     </div>`;
   const redo = () => { commitTrip(); renderPlans(); };
   $("e-back").onclick = () => { if (!p.isNew || p.stops.length) commitTrip(); editPlan = null; update(); renderPlans(); };
-  $("e-name").onchange = e => { p.name = e.target.value; commitTrip(); };
-  $("e-start").onchange = e => { p.start = e.target.value; if (p.end && p.end < p.start) p.end = p.start; redo(); };
-  $("e-end").onchange = e => { p.end = e.target.value; commitTrip(); };
+  $("e-name").oninput = e => { p.name = e.target.value; $("e-title").textContent = p.name.trim() || "Mon projet"; };
+  $("e-name").onchange = () => commitTrip();
+  $("e-name").onkeydown = e => { if (e.key === "Enter") e.target.blur(); };
+  $("e-start").onclick = async () => {
+    const v = await pickDay(p.start, "Départ");
+    if (v === null) return;
+    p.start = v; if (p.end && v && p.end < v) p.end = v;
+    redo();
+  };
+  $("e-end").onclick = async () => {
+    // par défaut : le départ plus toutes les nuits prévues
+    let def = p.end;
+    if (!def && p.start) { const d = new Date(p.start + "T12:00"); d.setDate(d.getDate() + d3.sum(p.nights)); def = isoDay(d); }
+    const v = await pickDay(def, "Retour", p.end ? true : false);
+    if (v === null) return;
+    p.end = v && p.start && v < p.start ? p.start : v;
+    redo();
+  };
   $("e-notes").onchange = e => { p.notes = e.target.value; commitTrip(); };
   bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
     const id = city && h?.city ? cityId(h.city, r) : r || c;
