@@ -351,30 +351,37 @@ async function loadSites() {
 }
 // Noms français des sites UNESCO : Wikidata (identifiant P757), demandés une fois puis gardés 30 jours.
 // Sans réseau, les noms anglais de la liste restent ; ils restent aussi cherchables.
-const FR_KEY = "explora-sites-fr";
+const FR_KEY = "explora-sites-fr-2";
+// quelques sites dont Wikidata garde le nom local
+const FR_FIX = { 395: "Place des Miracles, Pise", 1349: "Canaux d'Amsterdam", 616: "Centre historique de Prague", 320: "Œuvres d'Antoni Gaudí" };
 function applyFrNames(m) {
   for (const st of sites) {
-    const fr = !st.wonder && m[st.id];
+    const fr = !st.wonder && (m[st.id] || (FR_FIX[st.id] && [FR_FIX[st.id]]));
     if (!fr) continue;
     st.en = st.en || st.n;
-    st.n = cap(fr[0]);
+    st.n = cap(FR_FIX[st.id] || fr[0]);
     if (fr[1]) st.wiki = fr[1];
     st.key = norm(st.n) + "|" + norm(st.en);
   }
 }
 async function frenchSiteNames() {
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(FR_KEY)); } catch (e) {}
-  if (saved?.m) applyFrNames(saved.m);
+  try { localStorage.removeItem("explora-sites-fr"); saved = JSON.parse(localStorage.getItem(FR_KEY)); } catch (e) {}
+  applyFrNames(saved?.m || {});
   if (saved && Date.now() - saved.t < 30 * 864e5) return;
-  const q = `SELECT ?id ?l ?t WHERE { ?s wdt:P757 ?id . ?s rdfs:label ?l . FILTER(LANG(?l) = "fr")
+  // les identifiants « 320bis », « 616ter »… désignent le même site agrandi
+  const q = `SELECT ?id ?l ?t WHERE { ?s wdt:P757 ?id .
+    OPTIONAL { ?s rdfs:label ?l . FILTER(LANG(?l) = "fr") }
     OPTIONAL { ?a schema:about ?s ; schema:isPartOf <https://fr.wikipedia.org/> ; schema:name ?t } }`;
   try {
     const d = await fetch("https://query.wikidata.org/sparql?" + new URLSearchParams({ format: "json", query: q })).then(r => r.json());
     const m = {};
     for (const b of d.results.bindings) {
-      const id = b.id.value;
-      if (/^\d+$/.test(id) && !m[id]) m[id] = b.t ? [b.l.value, b.t.value] : [b.l.value];
+      const id = b.id.value.match(/^(\d+)(bis|ter|quater)?$/i)?.[1];
+      const name = b.l?.value || b.t?.value.replace(/ \(.*\)$/, "");
+      if (!id || !name) continue;
+      const exact = b.id.value === id;
+      if (!m[id] || (exact && !m[id].exact)) m[id] = Object.assign(b.t ? [name, b.t.value] : [name], { exact });
     }
     if (Object.keys(m).length < 500) return;
     applyFrNames(m);
