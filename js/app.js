@@ -345,7 +345,41 @@ async function loadSites() {
     siteById.set(st.id, st);
     for (const c of st.codes) { if (!sitesBy.has(c)) sitesBy.set(c, []); sitesBy.get(c).push(st); }
   }
+  frenchSiteNames();
   update();
+}
+// Noms français des sites UNESCO : Wikidata (identifiant P757), demandés une fois puis gardés 30 jours.
+// Sans réseau, les noms anglais de la liste restent ; ils restent aussi cherchables.
+const FR_KEY = "explora-sites-fr";
+function applyFrNames(m) {
+  for (const st of sites) {
+    const fr = !st.wonder && m[st.id];
+    if (!fr) continue;
+    st.en = st.en || st.n;
+    st.n = cap(fr[0]);
+    if (fr[1]) st.wiki = fr[1];
+    st.key = norm(st.n) + "|" + norm(st.en);
+  }
+}
+async function frenchSiteNames() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(FR_KEY)); } catch (e) {}
+  if (saved?.m) applyFrNames(saved.m);
+  if (saved && Date.now() - saved.t < 30 * 864e5) return;
+  const q = `SELECT ?id ?l ?t WHERE { ?s wdt:P757 ?id . ?s rdfs:label ?l . FILTER(LANG(?l) = "fr")
+    OPTIONAL { ?a schema:about ?s ; schema:isPartOf <https://fr.wikipedia.org/> ; schema:name ?t } }`;
+  try {
+    const d = await fetch("https://query.wikidata.org/sparql?" + new URLSearchParams({ format: "json", query: q })).then(r => r.json());
+    const m = {};
+    for (const b of d.results.bindings) {
+      const id = b.id.value;
+      if (/^\d+$/.test(id) && !m[id]) m[id] = b.t ? [b.l.value, b.t.value] : [b.l.value];
+    }
+    if (Object.keys(m).length < 500) return;
+    applyFrNames(m);
+    try { localStorage.setItem(FR_KEY, JSON.stringify({ t: Date.now(), m })); } catch (e) {}
+    update();
+  } catch (e) {}
 }
 async function loadCities() {
   const d = await fetch(dataUrl("cities.json")).then(r => r.json());
@@ -783,10 +817,10 @@ async function fetchPhoto(site) {
     const lang = site.wiki ? "fr" : "en";
     const api = params => fetch(`https://${lang}.wikipedia.org/w/api.php?${new URLSearchParams({ format: "json", origin: "*", ...params })}`).then(r => r.json());
     const want = { action: "query", prop: "pageimages|info", piprop: "thumbnail", pithumbsize: "800", inprop: "url" };
-    let d = site.wiki ? await api({ ...want, titles: site.wiki }) : await api({ ...want, generator: "search", gsrsearch: site.n, gsrlimit: "1" });
+    let d = site.wiki ? await api({ ...want, titles: site.wiki }) : await api({ ...want, generator: "search", gsrsearch: site.en || site.n, gsrlimit: "1" });
     let page = Object.values(d.query?.pages || {})[0];
     if (!page?.thumbnail && !site.wiki) { // repli : recherche sur le début du nom
-      d = await api({ ...want, generator: "search", gsrsearch: site.n.split(/[,(:–]/)[0], gsrlimit: "1" });
+      d = await api({ ...want, generator: "search", gsrsearch: (site.en || site.n).split(/[,(:–]/)[0], gsrlimit: "1" });
       page = Object.values(d.query?.pages || {})[0];
     }
     if (!page || page.missing !== undefined) return null;
