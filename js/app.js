@@ -1183,10 +1183,9 @@ function renderPlans() {
         </div>
       </div>`; }).join("")}</div>` : `
     <div class="block empty-state">
-      <p style="margin-top:0">Organise ton prochain voyage : les villes étape par étape, les nuits, les vols ou la route en voiture, et ton itinéraire sur une carte. Une fois rentré, un appui suffit pour tout ajouter à ta carte.</p>
+      <p style="margin-top:0">Organise ton prochain voyage, en avion ou en road trip : les villes étape par étape, les nuits, le trajet entre chaque étape, et ton itinéraire sur une carte. Une fois rentré, un appui suffit pour tout ajouter à ta carte.</p>
       <div class="btns" style="justify-content:center">
         <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
-        <button class="btn" data-start="Road trip">Créer un road trip</button>
       </div>
     </div>`}`;
   const start = name => { editPlan = { id: Date.now().toString(36), name, start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
