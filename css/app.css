@@ -348,7 +348,6 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .trip-top .icon-btn { font-size: 26px; line-height: 1; }
 .trip-map { position: relative; height: 270px; border-radius: 18px; overflow: hidden; background: var(--ocean); border: 1px solid var(--line); margin-bottom: 12px; }
 .trip-map svg { width: 100%; height: 100%; display: block; touch-action: none; }
-.trip-map p { position: absolute; inset: auto 0 14px; margin: 0; text-align: center; font-size: 13px; color: var(--ink-2); pointer-events: none; }
 .tm-land { fill: var(--fog); stroke: var(--fog-line); stroke-width: .7; vector-effect: non-scaling-stroke; }
 .tm-land.been { fill: var(--found-soft); fill-opacity: .35; }
 .tm-reg { fill: none; stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; opacity: .7; }
@@ -378,3 +377,17 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .date-btn { font: inherit; font-size: 15px; color: var(--ink); padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); text-align: left; cursor: pointer; width: 100%; }
 .date-btn.empty { color: var(--ink-2); }
 .trip-top h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.trip-map.big { height: 62vh; }
+.tm-hint { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: var(--ink-2); background: color-mix(in srgb, var(--bg) 75%, transparent); padding: 3px 8px; border-radius: 999px; pointer-events: none; }
+.tm-btns { position: absolute; right: 8px; top: 8px; display: grid; gap: 6px; }
+.tm-btns .icon-btn { width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid var(--line); color: var(--ink); font-size: 16px; }
+.tm-city { cursor: pointer; }
+.tm-city .hit { fill: transparent; }
+.tm-city .dot { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.5; }
+.tm-city text { fill: var(--ink-2); font: 500 11px var(--f-body); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.tm-city:active .dot { fill: var(--me); }
+.tm-mark { cursor: pointer; }
+.istop .moves { align-items: center; gap: 4px; }
+.grip { display: grid; place-items: center; width: 36px; height: 36px; font-size: 20px; color: var(--ink-2); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.istop.dragging { position: relative; z-index: 2; background: var(--surface); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.istop.drop-here { box-shadow: inset 0 3px 0 var(--me); }

@@ -1224,7 +1224,7 @@ function renderPlans() {
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
     const p = state.plans.find(x => x.id === el.dataset.plan);
-    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); renderPlans(); $("view-plans").scrollTo(0, 0); };
+    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); tripCam = null; renderPlans(); $("view-plans").scrollTo(0, 0); };
     const done = el.querySelector('[data-act="done"]');
     if (done) done.onclick = () => {
       if (!done.dataset.armed) {
@@ -1276,8 +1276,9 @@ function renderTrip(box) {
   box.innerHTML = `
     <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
       <h1 class="grow" id="e-title">${esc(p.name)}</h1></div>
-    <div class="trip-map"><svg id="trip-map" aria-label="Carte du trip"></svg>
-      ${p.stops.length ? "" : `<p>Ajoute tes étapes : l'itinéraire s'affichera ici.</p>`}
+    <div class="trip-map ${tripBig ? "big" : ""}"><svg id="trip-map" aria-label="Carte du trip"></svg>
+      <span class="tm-hint">Touche une ville pour l'ajouter</span>
+      <div class="tm-btns"><button class="icon-btn" id="tm-fit" aria-label="Recentrer la carte">◎</button><button class="icon-btn" id="tm-big" aria-label="${tripBig ? "Réduire" : "Agrandir"} la carte">${tripBig ? "⤡" : "⤢"}</button></div>
       ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}</div>
     ${p.stops.length > 1 ? `<div class="trip-sum">
       <span><b>${p.stops.length}</b> étapes</span><span><b>${t.nights}</b> ${t.nights > 1 ? "nuits" : "nuit"}</span>
@@ -1298,7 +1299,7 @@ function renderTrip(box) {
           <span class="n">${i + 1}</span>
           <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
           <span class="nights"><button data-nt="-1" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-nt="1" aria-label="Une nuit de plus">+</button></span>
-          <span class="moves"><button class="icon-btn" data-mv="-1" aria-label="Monter" ${i ? "" : "disabled"}>↑</button><button class="icon-btn" data-mv="1" aria-label="Descendre" ${i < p.stops.length - 1 ? "" : "disabled"}>↓</button><button class="icon-btn" data-rm aria-label="Retirer">✕</button></span>
+          <span class="moves"><button class="icon-btn" data-rm aria-label="Retirer ${esc(placeName(id))}">✕</button>${p.stops.length > 1 ? `<span class="grip" aria-label="Glisser pour changer l'ordre" title="Glisser pour changer l'ordre">≡</span>` : ""}</span>
         </li>`; }).join("")}
       </ol>
       <div class="add" style="margin-top:12px">
@@ -1337,8 +1338,8 @@ function renderTrip(box) {
   $("e-notes").onchange = e => { p.notes = e.target.value; commitTrip(); };
   bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
     const id = city && h?.city ? cityId(h.city, r) : r || c;
-    if (p.stops[p.stops.length - 1] === id) return;
-    p.stops.push(id); p.nights.push(1); p.modes.push("");
+    if (!addTripStop(p, id)) return;
+    tripCam = null; // la carte se recadre sur la nouvelle étape
     redo();
     $("e-q").focus();
   });
@@ -1350,17 +1351,30 @@ function renderTrip(box) {
   box.querySelectorAll(".istop").forEach(li => {
     const i = +li.dataset.i;
     li.querySelectorAll("[data-nt]").forEach(b => b.onclick = () => { p.nights[i] = Math.max(0, Math.min(99, p.nights[i] + +b.dataset.nt)); redo(); });
-    li.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => {
-      const j = i + +b.dataset.mv;
-      for (const a of [p.stops, p.nights]) [a[i], a[j]] = [a[j], a[i]];
-      // les trajets autour des étapes déplacées sont recalculés
-      for (const k of [i, j, i + 1, j + 1]) if (k < p.modes.length) p.modes[k] = "";
-      redo();
-    });
-    li.querySelector("[data-rm]").onclick = () => {
-      for (const a of [p.stops, p.nights, p.modes]) a.splice(i, 1);
-      if (i < p.modes.length) p.modes[i] = "";
-      redo();
+    li.querySelector("[data-rm]").onclick = () => { removeTripStop(p, i); redo(); };
+    // glisser la poignée pour changer l'ordre
+    const handle = li.querySelector(".grip");
+    if (handle) handle.onpointerdown = e => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      const items = [...box.querySelectorAll(".istop")], y0 = e.clientY;
+      const mids = items.map(x => { const r = x.getBoundingClientRect(); return r.top + r.height / 2; });
+      let to = i;
+      li.classList.add("dragging");
+      handle.onpointermove = ev => {
+        const dy = ev.clientY - y0;
+        li.style.transform = `translateY(${dy}px)`;
+        const y = mids[i] + dy;
+        to = mids.filter(m => m < y).length - (mids[i] < y ? 1 : 0);
+        to = Math.max(0, Math.min(items.length - 1, to));
+        items.forEach((x, k) => x.classList.toggle("drop-here", k === to && k !== i));
+      };
+      handle.onpointerup = handle.onpointercancel = () => {
+        handle.onpointermove = handle.onpointerup = handle.onpointercancel = null;
+        li.classList.remove("dragging"); li.style.transform = "";
+        if (to !== i) { moveTripStop(p, i, to); redo(); }
+        else items.forEach(x => x.classList.remove("drop-here"));
+      };
     };
   });
   if ($("e-big")) $("e-big").onclick = () => { commitTrip(); const id = p.id; editPlan = null; renderPlans(); showRoute(id); };
@@ -1372,7 +1386,41 @@ function renderTrip(box) {
     save(); editPlan = null; update(); renderPlans();
     toast("Trip supprimé", 1400);
   };
+  $("tm-fit").onclick = () => { tripCam = null; drawTripMap(p); };
+  $("tm-big").onclick = () => { tripBig = !tripBig; renderPlans(); };
   drawTripMap(p);
+}
+// Vue de la carte du trip : gardée tant qu'on modifie le même trip, pour que la carte ne saute pas
+let tripCam = null, tripBig = false;
+function addTripStop(p, id) {
+  if (p.stops[p.stops.length - 1] === id) return false;
+  p.stops.push(id); p.nights.push(1); p.modes.push("");
+  return true;
+}
+function moveTripStop(p, i, j) {
+  if (i === j) return;
+  for (const a of [p.stops, p.nights, p.modes]) a.splice(j, 0, a.splice(i, 1)[0]);
+  // les trajets autour des étapes déplacées sont recalculés
+  for (const k of [i, i + 1, j, j + 1]) if (k < p.modes.length) p.modes[k] = "";
+}
+function removeTripStop(p, i) {
+  for (const a of [p.stops, p.nights, p.modes]) a.splice(i, 1);
+  if (i < p.modes.length) p.modes[i] = "";
+}
+function stopMenu(p, i) {
+  const back = document.createElement("div");
+  back.className = "mp-back";
+  back.innerHTML = `<div class="card mp" role="dialog" aria-label="Étape ${i + 1}">
+    <h3>${i + 1}. ${esc(placeName(p.stops[i]))}</h3>
+    <div class="btns">
+      <button class="btn danger" data-mp="rm">Retirer cette étape</button>
+      <button class="btn" data-mp="cancel">Annuler</button>
+    </div></div>`;
+  document.body.append(back);
+  const close = () => back.remove();
+  back.onclick = e => { if (e.target === back) close(); };
+  back.querySelector('[data-mp="cancel"]').onclick = close;
+  back.querySelector('[data-mp="rm"]').onclick = () => { close(); removeTripStop(p, i); commitTrip(); renderPlans(); toast("Étape retirée", 1200); };
 }
 function drawTripMap(p) {
   const el = $("trip-map");
@@ -1380,18 +1428,21 @@ function drawTripMap(p) {
   const W = el.clientWidth || 360, H = el.clientHeight || 260;
   const ids = p.stops.map((id, i) => i).filter(i => place(p.stops[i]));
   const pts = ids.map(i => centroid(p.stops[i]));
-  let proj;
-  if (!pts.length) proj = d3.geoNaturalEarth1().fitExtent([[8, 8], [W - 8, H - 8]], { type: "Sphere" });
+  let proj, cam = tripCam && tripCam.id === p.id ? tripCam : null;
+  if (cam) proj = d3.geoMercator().scale(cam.scale).center(cam.center).translate([W / 2, H / 2]);
   else {
-    proj = d3.geoMercator().fitExtent([[56, 44], [W - 56, H - 36]], { type: "MultiPoint", coordinates: pts.length > 1 ? pts : [pts[0], pts[0]] });
+    const fit = pts.length > 1 ? pts : pts.length ? [pts[0], pts[0]] : [[-150, -50], [170, 72]];
+    proj = d3.geoMercator().fitExtent([[56, 44], [W - 56, H - 36]], { type: "MultiPoint", coordinates: fit });
     // une seule étape ou des villes très proches : on garde un peu de recul
-    if (pts.length < 2 || proj.scale() > 6000) proj.scale(pts.length < 2 ? 1500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate([W / 2, H / 2]);
+    if (pts.length && (pts.length < 2 || proj.scale() > 6000)) proj.scale(pts.length < 2 ? 1500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate([W / 2, H / 2]);
+    else proj.center(proj.invert([W / 2, H / 2])).translate([W / 2, H / 2]);
+    cam = tripCam = { id: p.id, scale: proj.scale(), center: proj.center(), t: d3.zoomIdentity };
   }
   const path = d3.geoPath(proj);
   const svgT = d3.select(el);
   svgT.selectAll("*").remove();
   const g = svgT.append("g");
-  const near = f => { const [[x0, y0], [x1, y1]] = path.bounds(f); return x1 > -W && x0 < 2 * W && y1 > -H && y0 < 2 * H; };
+  const near = f => { const [[x0, y0], [x1, y1]] = path.bounds(f); return x1 > -2 * W && x0 < 3 * W && y1 > -2 * H && y0 < 3 * H; };
   g.selectAll(".tm-land").data(countries.filter(near)).join("path")
     .attr("class", d => "tm-land" + (state.c.has(d.id) ? " been" : "")).attr("d", path);
   // limites des régions des pays traversés
@@ -1405,19 +1456,54 @@ function drawTripMap(p) {
     const c = legPath(a, b, "plane").split("Q")[1].split(" ")[0].split(",").map(Number);
     return { x: .25 * a[0] + .5 * c[0] + .25 * b[0], y: .25 * a[1] + .5 * c[1] + .25 * b[1], r: Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI };
   })).join("text").attr("class", "tm-plane").text("✈");
-  const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, name: placeName(p.stops[ids[j]]) })))
-    .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; });
+  // villes à toucher pour les ajouter : les plus grandes de la zone visible, assez espacées
+  const gC = g.append("g");
+  const cityXY = cities.map(c => proj([c.lon, c.lat]));
+  const drawCities = t => {
+    const x0 = -t.x / t.k, y0 = -t.y / t.k, x1 = (W - t.x) / t.k, y1 = (H - t.y) / t.k, gap = 40 / t.k;
+    const picked = [];
+    for (let i = 0; i < cities.length && picked.length < 45; i++) {
+      const [x, y] = cityXY[i];
+      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+      // pas de ville sous une étape ni sous son nom
+      if (P.some(q => x - q[0] > -gap * 2.2 && x - q[0] < gap * 2.6 && Math.abs(q[1] - y) < gap * .55)) continue;
+      if (picked.some(o => Math.abs(o.x - x) < gap * 1.6 && Math.abs(o.y - y) < gap * .5)) continue;
+      picked.push({ x, y, c: cities[i] });
+    }
+    gC.selectAll(".tm-city").data(picked, d => d.c.n + d.x).join(enter => {
+      const m = enter.append("g").attr("class", "tm-city");
+      m.append("circle").attr("class", "hit").attr("r", 16);
+      m.append("circle").attr("class", "dot").attr("r", 4);
+      m.append("text").attr("x", 7).attr("dy", "0.35em").text(d => d.c.n);
+      m.on("click", (e, d) => {
+        e.stopPropagation();
+        const r = regionIn(d.c.code, d.c.lon, d.c.lat);
+        if (!addTripStop(p, cityId(d.c, r ? r.id : d.c.code))) return;
+        commitTrip(); renderPlans();
+        toast(`${d.c.n} : étape ${p.stops.length} ✓`, 1200);
+      });
+      return m;
+    }).attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / t.k})`);
+  };
+  const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, i: ids[j], name: placeName(p.stops[ids[j]]) })))
+    .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; })
+    .on("click", (e, d) => { e.stopPropagation(); stopMenu(p, d.i); });
   marks.select(".num").text(d => d.n);
   marks.select(".lbl").text(d => d.name.length > 18 ? d.name.slice(0, 17) + "…" : d.name);
   const place2 = kk => {
     marks.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
     planes.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk}) rotate(${d.r})`);
+    gC.selectAll(".tm-city").attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
     // étiquette à gauche quand une autre étape est juste à droite
-    marks.select(".lbl").attr("x", d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18) ? -15 : 15)
-      .attr("text-anchor", d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18) ? "end" : "start");
+    const left = d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18);
+    marks.select(".lbl").attr("x", d => left(d) ? -15 : 15).attr("text-anchor", d => left(d) ? "end" : "start");
   };
-  place2(1);
-  svgT.call(d3.zoom().scaleExtent([.5, 16]).on("zoom", e => { g.attr("transform", e.transform); place2(e.transform.k); }));
+  const zoomT = d3.zoom().scaleExtent([.3, 40])
+    .on("zoom", e => { g.attr("transform", e.transform); place2(e.transform.k); cam.t = e.transform; })
+    .on("end", e => drawCities(e.transform));
+  svgT.call(zoomT).on("dblclick.zoom", null);
+  svgT.call(zoomT.transform, cam.t);
+  drawCities(cam.t);
 }
 
 /* ---------- Recherches ---------- */
