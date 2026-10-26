@@ -287,12 +287,14 @@ function drawMap() {
   gSel.selectAll("path").data(selected ? [shapeOf(selected)] : [], d => d.id + (d.detail ? "+" : "")).join("path").attr("class", "selected").attr("d", path);
   // sites du patrimoine mondial du pays ouvert : petits losanges, dorés une fois visités
   gSites.selectAll(".site").data(current ? (sitesBy.get(current) || []).filter(st => regionIn(current, st.lon, st.lat) || st.codes.length === 1) : [], d => d.id).join(
-    enter => enter.append("g").attr("class", "site").call(g => {
-      g.append("circle").attr("r", 13).attr("class", "hit");
-      g.append("path").attr("d", "M0,-7L7,0L0,7L-7,0Z");
+    enter => enter.append("g").attr("class", d => "site" + (d.wonder ? " wonder" : "")).call(g => {
+      g.append("circle").attr("r", 14).attr("class", "hit");
+      g.append("path").attr("d", d => d.wonder ? STAR : "M0,-7L7,0L0,7L-7,0Z");
     }).on("click", (e, d) => { e.stopPropagation(); selSite = selSite === d.id ? null : d.id; selected = null; update(); })
       .on("pointermove", (e, d) => showTip(e, d.n)).on("pointerleave", () => tip.hidden = true)
-  ).attr("transform", siteTransform).classed("visited", d => state.u.has(d.id)).classed("on", d => d.id === selSite).raise();
+  ).attr("transform", siteTransform).classed("visited", d => state.u.has(d.id)).classed("on", d => d.id === selSite)
+    .order().raise();
+  gSites.selectAll(".wonder").raise();
   drawRoute();
 }
 
@@ -319,6 +321,18 @@ function sizeStops() {
 /* ---------- Villes ---------- */
 // GeoNames (CC BY 4.0) : villes de plus de 10 000 habitants, triées de la plus peuplée à la moins peuplée
 let cities = [];
+// Les 7 merveilles du monde moderne (New7Wonders, 2007) et la pyramide de Gizeh, merveille honoraire.
+// Elles sont ajoutées à la liste des sites, avec leur nom français et une étoile sur la carte.
+const WONDERS = [
+  { id: "w-muraille", n: "Grande Muraille de Chine", lon: 117.236, lat: 40.431, codes: ["CHN"], wiki: "Grande Muraille" },
+  { id: "w-petra", n: "Petra", lon: 35.441, lat: 30.329, codes: ["JOR"], wiki: "Pétra (Jordanie)" },
+  { id: "w-christ", n: "Christ Rédempteur", lon: -43.211, lat: -22.952, codes: ["BRA"], wiki: "Christ Rédempteur (Rio de Janeiro)" },
+  { id: "w-machu", n: "Machu Picchu", lon: -72.545, lat: -13.163, codes: ["PER"], wiki: "Machu Picchu" },
+  { id: "w-chichen", n: "Chichén Itzá", lon: -88.569, lat: 20.683, codes: ["MEX"], wiki: "Chichén Itzá" },
+  { id: "w-colisee", n: "Colisée", lon: 12.492, lat: 41.890, codes: ["ITA"], wiki: "Colisée" },
+  { id: "w-taj", n: "Taj Mahal", lon: 78.042, lat: 27.175, codes: ["IND"], wiki: "Taj Mahal" },
+  { id: "w-gizeh", n: "Pyramide de Khéops", lon: 31.134, lat: 29.979, codes: ["EGY"], wiki: "Pyramide de Khéops", hon: true }
+];
 // pays où se trouve le point du site (un site transfrontalier est listé dans plusieurs pays)
 const short = (t, n = 48) => t.length > n ? t.slice(0, n - 1).replace(/[\s,;–-]+\S*$/, "") + "…" : t;
 const siteHome = st => st.codes.find(c => regionIn(c, st.lon, st.lat)) || st.codes[0];
@@ -326,6 +340,7 @@ async function loadSites() {
   const [list, iso] = await Promise.all([fetch(dataUrl("unesco.json")).then(r => r.json()), fetch(dataUrl("iso2.json")).then(r => r.json())]);
   iso2 = iso;
   sites = list.map(([id, n, lon, lat, cat, year, codes]) => ({ id: String(id), n, lon, lat, cat, year, codes, key: norm(n) }));
+  for (const w of WONDERS) sites.push({ ...w, cat: "c", year: 2007, wonder: true, key: norm(w.n) });
   for (const st of sites) {
     siteById.set(st.id, st);
     for (const c of st.codes) { if (!sitesBy.has(c)) sitesBy.set(c, []); sitesBy.get(c).push(st); }
@@ -341,6 +356,12 @@ async function loadCities() {
 const OCEANS = [["Atlantique", -44, 27], ["Atlantique", -14, -22], ["Pacifique", -135, 5], ["Pacifique", 170, 20],
   ["Indien", 78, -22], ["Austral", 20, -60]];
 const oceanTransform = d => { const [x, y] = projection([d[1], d[2]]); return `translate(${x},${y}) scale(${1 / k})`; };
+const STAR = (() => {
+  let d = "";
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? 4.2 : 10;
+    d += (i ? "L" : "M") + (Math.cos(a) * r).toFixed(2) + "," + (Math.sin(a) * r).toFixed(2); }
+  return d + "Z";
+})();
 const siteTransform = d => { const [x, y] = projection([d.lon, d.lat]); return `translate(${x},${y}) scale(${1 / k})`; };
 const cityTransform = d => `translate(${d.px},${d.py}) scale(${1 / k})`;
 function drawCities() {
@@ -515,7 +536,8 @@ function stats() {
     if (c === "Europe") europe++;
     if (f.nreg > 1 && visitedIn(id) === f.nreg) complete++;
   }
-  return { n: state.c.size, regions: state.r.size, continents: conts.size, cont, europe, complete, pct: worldPct(), plans: state.plans.length, wish: state.w.size, sites: state.u.size };
+  return { n: state.c.size, regions: state.r.size, continents: conts.size, cont, europe, complete, pct: worldPct(), plans: state.plans.length, wish: state.w.size, sites: state.u.size,
+    wonders: WONDERS.filter(w => !w.hon && state.u.has(w.id)).length };
 }
 
 /* ---------- Badges ---------- */
@@ -542,7 +564,8 @@ const BADGES = [
   { m: "✈", name: "Organisateur", desc: "Un projet de voyage", ok: s => s.plans >= 1 },
   { m: "◆", name: "Patrimoine", desc: "1 site UNESCO", ok: s => s.sites >= 1 },
   { m: "◆10", name: "Gardien du patrimoine", desc: "10 sites UNESCO", ok: s => s.sites >= 10 },
-  { m: "◆50", name: "Merveilles du monde", desc: "50 sites UNESCO", ok: s => s.sites >= 50 }
+  { m: "◆50", name: "Collectionneur", desc: "50 sites UNESCO", ok: s => s.sites >= 50 },
+  { m: "★7", name: "Les 7 merveilles", desc: "Les 7 merveilles du monde", ok: s => s.wonders >= 7 }
 ];
 
 /* ---------- Mise à jour de l'écran ---------- */
@@ -577,9 +600,10 @@ function renderSheet() {
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       ${site ? `
       <div class="pick">
-        <div class="name"><b>${esc(site.n)}</b><small>Patrimoine mondial · ${CAT[site.cat]} · ${site.year}${state.u.has(site.id) ? " · visité" : ""}</small></div>
+        <div class="name"><b>${esc(site.n)}</b><small>${site.wonder ? (site.hon ? "Merveille honoraire du monde" : "Une des 7 merveilles du monde") : `Patrimoine mondial · ${CAT[site.cat]} · ${site.year}`}${state.u.has(site.id) ? " · visité" : ""}</small></div>
         <button class="btn small ${state.u.has(site.id) ? "done" : "primary"}" id="s-site">${state.u.has(site.id) ? "Retirer" : "Marquer visité"}</button>
-      </div>` : sel ? `
+      </div>
+      <div class="photo" id="s-photo" hidden></div>` : sel ? `
       <div class="pick">
         <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
@@ -609,7 +633,10 @@ function renderSheet() {
     $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
     if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
-    if (site) $("s-site").onclick = () => { toggleSite(site.id); update(); };
+    if (site) {
+      $("s-site").onclick = () => { toggleSite(site.id); update(); };
+      showPhoto(site);
+    }
     if (sel) $("s-mark").onclick = () => {
       const month = $("s-date") && $("s-date").value;
       toggleRegion(sel.id);
@@ -687,14 +714,25 @@ function renderProgress() {
       <div class="tile"><b>${s.regions}</b><span>régions</span></div>
       <div class="tile"><b>${s.continents}</b><span>continents sur 6</span></div>
     </div>
+    ${sites.length ? `
+    <div class="block">
+      <h3>Les 7 merveilles du monde</h3>
+      <div class="wonders">${WONDERS.map(w => `
+        <button class="wonder-row ${state.u.has(w.id) ? "on" : ""}" data-site="${w.id}">
+          <span class="st">${state.u.has(w.id) ? "★" : "☆"}</span>
+          <span class="t"><b>${esc(w.n)}</b><small>${flag(w.codes[0])} ${esc(byId.get(w.codes[0])?.properties.n || "")}${w.hon ? " · honoraire" : ""}</small></span>
+        </button>`).join("")}
+      </div>
+    </div>` : ""}
     ${sites.length ? (() => {
-      const seen = sites.filter(st => state.u.has(st.id));
-      const byCat = ["c", "n", "m"].map(c => [c, seen.filter(st => st.cat === c).length, sites.filter(st => st.cat === c).length]);
+      const seen = sites.filter(st => state.u.has(st.id) && !st.wonder);
+      const all = sites.filter(st => !st.wonder);
+      const byCat = ["c", "n", "m"].map(c => [c, seen.filter(st => st.cat === c).length, all.filter(st => st.cat === c).length]);
       return `
     <div class="block">
       <h3>Patrimoine mondial UNESCO</h3>
-      <div class="row between" style="margin-bottom:6px"><span><b class="num">${seen.length}</b> sites visités</span><span class="num muted">sur ${sites.length}</span></div>
-      <div class="bar"><i style="width:${Math.max(seen.length ? 1 : 0, seen.length / sites.length * 100)}%"></i></div>
+      <div class="row between" style="margin-bottom:6px"><span><b class="num">${seen.length}</b> sites visités</span><span class="num muted">sur ${all.length}</span></div>
+      <div class="bar"><i style="width:${Math.max(seen.length ? 1 : 0, seen.length / all.length * 100)}%"></i></div>
       <div class="tiles" style="margin-top:12px">${byCat.map(([c, v, t]) => `<div class="tile"><b>${v}</b><span>${CAT[c]}${v > 1 ? "s" : ""} sur ${t}</span></div>`).join("")}</div>
       ${seen.length ? `<ul class="sites">${seen.slice(0, 12).map(st => `<li><button data-site="${st.id}">${flag(siteHome(st))} ${esc(st.n)}</button></li>`).join("")}</ul>`
         : `<p class="small" style="margin:10px 0 0">Ouvre un pays sur la carte : ses sites du patrimoine mondial apparaissent en losanges ◆. Touche-en un pour le marquer.</p>`}
@@ -734,6 +772,39 @@ function renderProgress() {
     showTab("map"); openCountry(siteHome(st)); selSite = st.id; update();
   });
   $("btn-share").onclick = shareImage;
+}
+
+/* ---------- Photo d'un site (Wikipédia) ---------- */
+// Chargée au besoin depuis Wikipédia, puis gardée en mémoire. Sans connexion, la carte reste sans photo.
+const photos = new Map();
+async function fetchPhoto(site) {
+  if (photos.has(site.id)) return photos.get(site.id);
+  const p = (async () => {
+    const api = (lang, params) => fetch(`https://${lang}.wikipedia.org/w/api.php?${new URLSearchParams({ format: "json", origin: "*", ...params })}`).then(r => r.json());
+    const want = { action: "query", prop: "pageimages|info", piprop: "thumbnail", pithumbsize: "640", inprop: "url" };
+    let d = site.wiki
+      ? await api("fr", { ...want, titles: site.wiki })
+      : await api("en", { ...want, generator: "search", gsrsearch: site.n, gsrlimit: "1" });
+    let page = Object.values(d.query?.pages || {})[0];
+    if (!page?.thumbnail && !site.wiki) { // repli : recherche sur le nom sans la ponctuation
+      d = await api("en", { ...want, generator: "search", gsrsearch: site.n.split(/[,(:–]/)[0], gsrlimit: "1" });
+      page = Object.values(d.query?.pages || {})[0];
+    }
+    return page?.thumbnail ? { src: page.thumbnail.source, url: page.fullurl, title: page.title } : null;
+  })().catch(() => null);
+  photos.set(site.id, p);
+  return p;
+}
+async function showPhoto(site) {
+  const box = $("s-photo");
+  if (!box) return;
+  const photo = await fetchPhoto(site);
+  if (!photo || selSite !== site.id || $("s-photo") !== box) return;
+  box.innerHTML = `<img src="${esc(photo.src)}" alt="${esc(site.n)}" loading="lazy">
+    <a href="${esc(photo.url)}" target="_blank" rel="noopener">Photo : Wikipédia · ${esc(photo.title)}</a>`;
+  box.hidden = false;
+  box.querySelector("img").onerror = () => box.hidden = true;
+  document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
 
 /* ---------- Image à partager ---------- */
@@ -1041,7 +1112,7 @@ function searchHits(s, withRegions, withSites = false) {
   }
   if (withSites && s.length >= 4) for (const st of sites) {
     if (hits.length >= 12) break;
-    if (st.key.includes(s)) hits.push({ n: st.n, k: "Patrimoine mondial · " + (byId.get(siteHome(st))?.properties.n || ""), c: siteHome(st), site: st.id });
+    if (st.key.includes(s)) hits.push({ n: st.n, k: (st.wonder ? "7 merveilles · " : "Patrimoine mondial · ") + (byId.get(siteHome(st))?.properties.n || ""), c: siteHome(st), site: st.id });
   }
   return hits.slice(0, 12);
 }

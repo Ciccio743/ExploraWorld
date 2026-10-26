@@ -310,3 +310,15 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .sites { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 2px; }
 .sites button { all: unset; cursor: pointer; display: block; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--line); width: 100%; box-sizing: border-box; }
 .pick .name b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.site.wonder path { fill: var(--surface); stroke: var(--found-line); stroke-width: 1.5; stroke-linejoin: round; }
+.site.wonder.visited path { fill: var(--found); stroke: var(--on-found); }
+.photo { margin-top: 10px; }
+.photo img { display: block; width: 100%; height: 150px; object-fit: cover; border-radius: 12px; background: var(--fog); }
+.photo a { display: block; margin-top: 4px; font-size: 11px; color: var(--ink-2); text-decoration: none; }
+.wonders { display: grid; gap: 2px; margin-top: 8px; }
+.wonder-row { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.wonder-row .st { font-size: 18px; color: var(--fog-line); flex: none; width: 22px; text-align: center; }
+.wonder-row.on .st { color: var(--found); }
+.wonder-row .t b { display: block; font-size: 15px; }
+.wonder-row .t small { color: var(--ink-2); font-size: 12px; }
