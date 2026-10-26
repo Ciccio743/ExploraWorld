@@ -3,6 +3,8 @@ const WORLD_COUNTRIES = 195; // membres de l'ONU + Vatican + Palestine
 const CAT = { c: "culturel", n: "naturel", m: "mixte" };
 // moyens de transport : icône, nom, vitesse moyenne (km/h)
 const MODES = { plane: ["✈️", "Avion", 750], car: ["🚗", "Voiture", 80], train: ["🚆", "Train", 110], bus: ["🚌", "Bus", 65], boat: ["⛴️", "Bateau", 30] };
+// couleurs au choix pour un trip (lisibles en clair comme en sombre)
+const TRIP_COLORS = ["#1677ff", "#8b5cf6", "#ec4899", "#ef4444", "#f97316", "#eab308", "#16a34a", "#0d9488"];
 const CAT_IC = { c: "🏛️", n: "🌿", m: "🏞️" };
 const MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 195];
 const KIND = {
@@ -76,6 +78,7 @@ function cleanPlans(list) {
     const stops = Array.isArray(p.stops) ? p.stops.map(String) : [];
     return {
       id: String(p.id), name: String(p.name || "Mon projet"), start: p.start || "", end: p.end || "",
+      color: TRIP_COLORS.includes(p.color) ? p.color : TRIP_COLORS[0],
       stops, notes: String(p.notes || ""), done: !!p.done,
       // nights[i] : nuits passées à l'étape i · modes[i] : transport pour y arriver ("" = choisi selon la distance)
       nights: stops.map((_, i) => Math.max(0, Math.min(99, Math.round(+(p.nights || [])[i]) || 0))),
@@ -389,6 +392,7 @@ function drawRoute() {
   const plan = routePlan && state.plans.find(p => p.id === routePlan);
   const idx = plan ? plan.stops.map((id, i) => i).filter(i => place(plan.stops[i])) : [];
   const pts = idx.map(i => centroid(plan.stops[i]));
+  gRoute.style("--trip", plan ? plan.color : null);
   gRoute.selectAll(".route").data(idx.slice(1).map((i, j) => [pts[j], pts[j + 1], legMode(plan, i), legInfo(plan, i).road])).join("path")
     .attr("class", d => "route m-" + d[2]).attr("d", d => d[3] ? path({ type: "LineString", coordinates: d[3] }) : legPath(projection(d[0]), projection(d[1]), d[2]));
   const g = gRoute.selectAll(".stop").data(pts).join(enter => {
@@ -1197,6 +1201,7 @@ function newCountries(p) {
 function renderPlans() {
   const box = $("plans");
   if (editPlan) return renderTrip(box);
+  box.style.removeProperty("--trip");
   const list = [...state.plans].sort((a, b) => a.done - b.done || (a.start || "9999").localeCompare(b.start || "9999"));
   box.innerHTML = `
     <div class="row between"><h1>Mes projets</h1>${list.length ? `<button class="btn small primary" id="p-new">Nouveau</button>` : ""}</div>
@@ -1204,7 +1209,7 @@ function renderPlans() {
       const nc = newCountries(p), stops = p.stops.filter(place), t = tripTotals(p);
       return `
       <div class="plan" data-plan="${p.id}">
-        <div class="row between"><h4>${esc(p.name)}</h4>${p.done ? `<span class="chip new">Fait ✓</span>` : ""}</div>
+        <div class="row between"><h4><i class="tdot" style="background:${p.color}"></i>${esc(p.name)}</h4>${p.done ? `<span class="chip new">Fait ✓</span>` : ""}</div>
         ${planDates(p) ? `<div class="small">${esc(planDates(p))}</div>` : ""}
         <div class="small">${plural(stops.length, "étape", "étapes")}${t.nights ? " · " + plural(t.nights, "nuit", "nuits") : ""}${t.km ? " · " + fmtKm(t.km) : ""}${!p.done && nc ? ` · <b>${plural(nc, "nouveau pays", "nouveaux pays")}</b> à découvrir` : ""}</div>
         ${stops.length ? `<div class="chips">${stops.slice(0, 8).map(id => `<span class="chip ${isVisited(id) ? "" : "blue"}">${esc(placeName(id))}</span>`).join("")}${stops.length > 8 ? `<span class="chip">+${stops.length - 8}</span>` : ""}</div>` : ""}
@@ -1219,7 +1224,7 @@ function renderPlans() {
         <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
       </div>
     </div>`}`;
-  const start = name => { editPlan = { id: Date.now().toString(36), name, start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
+  const start = name => { editPlan = { id: Date.now().toString(36), name, color: TRIP_COLORS[state.plans.length % TRIP_COLORS.length], start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
   if ($("p-new")) $("p-new").onclick = () => start("Mon prochain trip");
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
@@ -1271,6 +1276,8 @@ function commitTrip() {
 }
 function renderTrip(box) {
   const p = editPlan, t = tripTotals(p);
+  p.color = p.color || TRIP_COLORS[0];
+  box.style.setProperty("--trip", p.color);
   const modeSel = i => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
     `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
   box.innerHTML = `
@@ -1286,6 +1293,8 @@ function renderTrip(box) {
     <div class="block">
       <div class="two">
         <label class="field" style="grid-column: 1 / -1">Nom du trip<input id="e-name" value="${esc(p.name)}" maxlength="60" placeholder="Ex. : Road trip en Italie" enterkeyhint="done"></label>
+        <div class="field" style="grid-column: 1 / -1">Couleur du trip<div class="swatches">${TRIP_COLORS.map(c =>
+          `<button type="button" class="swatch" data-color="${c}" style="--c:${c}" aria-label="Couleur ${c}" aria-pressed="${p.color === c}"></button>`).join("")}</div></div>
         <div class="field">Départ<button type="button" class="date-btn ${p.start ? "" : "empty"}" id="e-start">${p.start ? fmtDate(p.start) : "Choisir"}</button></div>
         <div class="field">Retour<button type="button" class="date-btn ${p.end ? "" : "empty"}" id="e-end">${p.end ? fmtDate(p.end) : "Choisir"}</button></div>
       </div>
@@ -1387,8 +1396,32 @@ function renderTrip(box) {
     toast("Trip supprimé", 1400);
   };
   $("tm-fit").onclick = () => { tripCam = null; drawTripMap(p); };
+  box.querySelectorAll("[data-color]").forEach(b => b.onclick = () => { p.color = b.dataset.color; redo(); });
   $("tm-big").onclick = () => { tripBig = !tripBig; renderPlans(); };
   drawTripMap(p);
+}
+// régions traversées par un trajet routier (calcul gardé en mémoire)
+const featBounds = new Map(), routeRegions = new Map();
+const inBounds = (f, [x, y]) => {
+  if (!featBounds.has(f)) featBounds.set(f, d3.geoBounds(f));
+  const [[x0, y0], [x1, y1]] = featBounds.get(f);
+  return y >= y0 && y <= y1 && (x0 <= x1 ? x >= x0 && x <= x1 : x >= x0 || x <= x1);
+};
+function regionsOnRoute(coords) {
+  const key = coords[0] + ";" + coords[coords.length - 1] + ";" + coords.length;
+  if (routeRegions.has(key)) return routeRegions.get(key);
+  const out = new Set(), step = Math.max(1, Math.floor(coords.length / 150));
+  let last = null;
+  for (let i = 0; i < coords.length; i += step) {
+    const pt = coords[i];
+    if (last && inBounds(last, pt) && d3.geoContains(last, pt)) continue;
+    const c = countries.find(f => inBounds(f, pt) && d3.geoContains(f, pt));
+    const r = c && (regionsBy.get(c.id) || []).find(f => inBounds(f, pt) && d3.geoContains(f, pt));
+    if (r) { out.add(r.id); last = r; }
+  }
+  const list = [...out];
+  routeRegions.set(key, list);
+  return list;
 }
 // Vue de la carte du trip : gardée tant qu'on modifie le même trip, pour que la carte ne saute pas
 let tripCam = null, tripBig = false;
@@ -1445,9 +1478,14 @@ function drawTripMap(p) {
   const near = f => { const [[x0, y0], [x1, y1]] = path.bounds(f); return x1 > -2 * W && x0 < 3 * W && y1 > -2 * H && y0 < 3 * H; };
   g.selectAll(".tm-land").data(countries.filter(near)).join("path")
     .attr("class", d => "tm-land" + (state.c.has(d.id) ? " been" : "")).attr("d", path);
-  // limites des régions des pays traversés
-  const codes = new Set(ids.map(i => placeCountry(p.stops[i])).filter(Boolean));
-  g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path").attr("class", "tm-reg").attr("d", path);
+  // régions des étapes en couleur du trip, plus légères celles traversées par la route
+  const legs = ids.slice(1).map(i => legInfo(p, i));
+  const onIds = new Set(ids.map(i => placeRegion(p.stops[i])));
+  const passIds = new Set(legs.flatMap(l => l.road ? regionsOnRoute(l.road) : []));
+  const codes = new Set([...ids.map(i => placeCountry(p.stops[i])), ...[...passIds].map(id => regionById.get(id)?.code)].filter(Boolean));
+  g.selectAll(".tm-land").classed("on", d => onIds.has(d.id) && !(regionsBy.get(d.id) || []).length);
+  g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path")
+    .attr("class", d => "tm-reg" + (onIds.has(d.id) || onIds.has(d.code) ? " on" : passIds.has(d.id) ? " pass" : "")).attr("d", path);
   const P = pts.map(d => proj(d));
   g.selectAll(".route").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i), legInfo(p, i).road])).join("path")
     .attr("class", d => "route m-" + d[2]).attr("d", d => d[3] ? d3.line()(d[3].map(c => proj(c))) : legPath(d[0], d[1], d[2]));
@@ -1460,9 +1498,9 @@ function drawTripMap(p) {
   const gC = g.append("g");
   const cityXY = cities.map(c => proj([c.lon, c.lat]));
   const drawCities = t => {
-    const x0 = -t.x / t.k, y0 = -t.y / t.k, x1 = (W - t.x) / t.k, y1 = (H - t.y) / t.k, gap = 40 / t.k;
+    const x0 = -t.x / t.k, y0 = -t.y / t.k, x1 = (W - t.x) / t.k, y1 = (H - t.y) / t.k, gap = 46 / t.k;
     const picked = [];
-    for (let i = 0; i < cities.length && picked.length < 45; i++) {
+    for (let i = 0; i < cities.length && picked.length < 28; i++) {
       const [x, y] = cityXY[i];
       if (x < x0 || x > x1 || y < y0 || y > y1) continue;
       // pas de ville sous une étape ni sous son nom

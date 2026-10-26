@@ -244,14 +244,14 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .country.wish { fill: var(--wish-soft); }
 .region.wish { fill: var(--wish); opacity: .75; }
 .detail .region.wish { fill: var(--wish-soft); opacity: 1; }
-.route { fill: none; stroke: var(--me); stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+.route { fill: none; stroke: var(--trip, var(--me)); stroke-width: 2.5; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .route.m-plane { stroke-dasharray: 7 6; animation: fly 1.4s linear infinite; }
 .route.m-train { stroke-dasharray: 1 6; stroke-width: 4; }
 .route.m-bus { stroke-dasharray: 10 5; }
 .route.m-boat { stroke-dasharray: 3 5; stroke: #0aa5c2; }
 @keyframes fly { to { stroke-dashoffset: -26; } }
 @media (prefers-reduced-motion: reduce) { .route.m-plane { animation: none; } }
-.stop circle { fill: var(--me); stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.stop circle { fill: var(--trip, var(--me)); stroke: var(--bg); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .stop text { fill: #fff; font: 700 11px var(--f-body); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .btn.wishbtn[aria-pressed="true"] { background: var(--wish-soft); border-color: transparent; }
@@ -349,16 +349,16 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .trip-map { position: relative; height: 270px; border-radius: 18px; overflow: hidden; background: var(--ocean); border: 1px solid var(--line); margin-bottom: 12px; }
 .trip-map svg { width: 100%; height: 100%; display: block; touch-action: none; }
 .tm-land { fill: var(--fog); stroke: var(--fog-line); stroke-width: .7; vector-effect: non-scaling-stroke; }
-.tm-land.been { fill: var(--found-soft); fill-opacity: .35; }
+
 .tm-reg { fill: none; stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; opacity: .7; }
-.tm-mark circle { fill: var(--me); stroke: var(--bg); stroke-width: 2; }
+.tm-mark circle { fill: var(--trip, var(--me)); stroke: var(--bg); stroke-width: 2; }
 .tm-mark .num { fill: #fff; font: 700 11px var(--f-body); text-anchor: middle; dominant-baseline: central; }
 .tm-mark .lbl { fill: var(--ink); font: 600 12px var(--f-body); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; stroke-linejoin: round; }
 .trip-sum { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 2px 12px; font-size: 13px; color: var(--ink-2); }
 .trip-sum b { color: var(--ink); font-size: 15px; }
 .itin { list-style: none; margin: 8px 0 0; padding: 0; }
 .istop { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-areas: "n t t" ". nights moves"; gap: 6px 10px; align-items: center; padding: 10px 0; }
-.istop .n { grid-area: n; width: 26px; height: 26px; border-radius: 50%; background: var(--me); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.istop .n { grid-area: n; width: 26px; height: 26px; border-radius: 50%; background: var(--trip, var(--me)); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
 .istop .t { grid-area: t; min-width: 0; }
 .istop .t b { display: block; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .istop .t small { color: var(--ink-2); font-size: 12px; }
@@ -370,7 +370,7 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .leg select { font: inherit; font-size: 14px; color: var(--ink); padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
 .two > * { min-width: 0; }
 .field input[type="date"] { width: 100%; min-width: 0; box-sizing: border-box; -webkit-appearance: none; appearance: none; }
-.tm-plane { fill: var(--me); font-size: 16px; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.tm-plane { fill: var(--trip, var(--me)); font-size: 16px; text-anchor: middle; dominant-baseline: central; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
 .tm-credit { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--ink-2); background: color-mix(in srgb, var(--bg) 70%, transparent); padding: 1px 5px; border-radius: 6px; pointer-events: none; }
 .three { display: grid; grid-template-columns: .8fr 1.4fr 1fr; gap: 8px; }
 .three > * { min-width: 0; }
@@ -391,3 +391,9 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .grip { display: grid; place-items: center; width: 36px; height: 36px; font-size: 20px; color: var(--ink-2); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .istop.dragging { position: relative; z-index: 2; background: var(--surface); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .istop.drop-here { box-shadow: inset 0 3px 0 var(--me); }
+.tm-reg.on, .tm-land.on { fill: var(--trip, var(--me)); fill-opacity: .7; }
+.tm-reg.pass { fill: var(--trip, var(--me)); fill-opacity: .3; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.swatch { width: 30px; height: 30px; border-radius: 50%; background: var(--c); border: 3px solid var(--bg); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.tdot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: 2px; }
