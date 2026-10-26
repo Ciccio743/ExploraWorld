@@ -69,6 +69,11 @@ button { font: inherit; color: inherit; }
 .country { fill: var(--fog); stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; }
 .country.visited { fill: var(--found-soft); }
 .country.active { fill: none; stroke: none; }
+.near .region { fill: var(--fog); stroke: var(--fog); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; pointer-events: all; }
+.near-line { fill: none; stroke: var(--fog-line); stroke-width: .6; vector-effect: non-scaling-stroke; pointer-events: none; }
+.near .region.in-visited { fill: var(--found-soft); stroke: var(--found-soft); }
+.near .region.visited { fill: var(--found); stroke: var(--found); }
+.near .region.wish { fill: var(--wish-soft); stroke: var(--wish-soft); opacity: 1; }
 .region { fill: transparent; stroke: none; pointer-events: none; }
 .region.visited { fill: var(--found); }
 .detail .region { fill: var(--fog); pointer-events: all; cursor: pointer; stroke: var(--fog-line); stroke-width: .6; vector-effect: non-scaling-stroke; }

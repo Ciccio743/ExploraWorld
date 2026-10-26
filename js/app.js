@@ -40,6 +40,7 @@ const today = () => { const d = new Date(); d.setHours(12, 0, 0, 0); return d; }
 /* ---------- Données et état ---------- */
 let countries = [], byId = new Map(), regionsBy = new Map(), regionById = new Map();
 let worldArea = 0;
+const neighbors = new Map(); // pays → pays voisins (frontière commune)
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
 let state = { c: new Map(), r: new Map(), w: new Map(), plans: [] };
 let current = null, selected = null, tab = "map", tripView = "visited";
@@ -132,6 +133,8 @@ async function load() {
   ]);
   migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
+  const nb = topojson.neighbors(world.objects.countries.geometries);
+  countries.forEach((f, i) => neighbors.set(f.id, nb[i].map(j => countries[j].id)));
   for (const f of countries) byId.set(f.id, f);
   for (const r of topojson.feature(world, world.objects.regions).features) {
     r.area = d3.geoArea(r); r.code = r.properties.g;
@@ -202,6 +205,7 @@ const svg = d3.select("#map");
 const root = svg.append("g");
 const gBase = root.append("g");
 const gOverlay = root.append("g");
+const gNear = root.append("g").attr("class", "near");
 const gDetail = root.append("g").attr("class", "detail");
 const gOutline = root.append("g");
 const gSel = root.append("g");
@@ -249,12 +253,18 @@ function drawBase() {
 }
 
 function drawMap() {
+  // autour du pays ouvert, les voisins sont dessinés avec leurs contours détaillés : frontières jointives
+  const near = new Set(current ? (neighbors.get(current) || []).filter(detailOf) : []);
   gBase.selectAll(".country")
     .classed("visited", d => state.c.has(d.id))
     .classed("wish", d => !state.c.has(d.id) && state.w.has(d.id))
-    .classed("active", d => d.id === current);
+    .classed("active", d => d.id === current || near.has(d.id));
+  gNear.selectAll(".region").data([...near].flatMap(c => detailOf(c).regions), d => d.id).join(
+    enter => enter.append("path").attr("d", path).on("click", (e, d) => { e.stopPropagation(); openCountry(d.code); })
+  ).attr("class", d => "region " + (state.r.has(d.id) ? "visited" : state.c.has(d.code) ? "in-visited" : state.w.has(d.id) || state.w.has(d.code) ? "wish" : ""));
+  gNear.selectAll(".near-line").data([...near].map(c => detailOf(c).outline)).join("path").attr("class", "near-line").attr("d", path);
   const marked = new Set([...state.r.keys(), ...[...state.w.keys()].filter(id => regionById.has(id))]);
-  const others = [...marked].map(id => regionById.get(id)).filter(r => r && r.code !== current);
+  const others = [...marked].map(id => regionById.get(id)).filter(r => r && r.code !== current && !near.has(r.code));
   gOverlay.selectAll(".region").data(others, d => d.id)
     .join(enter => enter.append("path").attr("d", path))
     .attr("class", d => "region " + (state.r.has(d.id) ? "visited" : "wish"));
@@ -383,6 +393,7 @@ function openCountry(code, regionId = null, focus = false) {
   // une ville cherchée : on cadre sa région, sinon le pays entier
   zoomTo(focus && regionId ? regionById.get(regionId) : byId.get(code).main);
   ensureDetail(code).then(d => { if (d && current === code) drawMap(); });
+  for (const n of neighbors.get(code) || []) ensureDetail(n).then(d => { if (d && current === code) drawMap(); });
 }
 function openWorld() {
   current = null; selected = null;
