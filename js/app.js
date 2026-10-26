@@ -1,6 +1,8 @@
 (() => {
 const WORLD_COUNTRIES = 195; // membres de l'ONU + Vatican + Palestine
 const CAT = { c: "culturel", n: "naturel", m: "mixte" };
+// moyens de transport : icône, nom, vitesse moyenne (km/h)
+const MODES = { plane: ["✈️", "Avion", 750], car: ["🚗", "Voiture", 80], train: ["🚆", "Train", 110], bus: ["🚌", "Bus", 65], boat: ["⛴️", "Bateau", 30] };
 const CAT_IC = { c: "🏛️", n: "🌿", m: "🏞️" };
 const MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 195];
 const KIND = {
@@ -70,10 +72,16 @@ function toMap(v) {
   return new Map();
 }
 function cleanPlans(list) {
-  return (Array.isArray(list) ? list : []).filter(p => p && p.id).map(p => ({
-    id: String(p.id), name: String(p.name || "Mon projet"), start: p.start || "", end: p.end || "",
-    stops: Array.isArray(p.stops) ? p.stops.map(String) : [], notes: String(p.notes || ""), done: !!p.done
-  }));
+  return (Array.isArray(list) ? list : []).filter(p => p && p.id).map(p => {
+    const stops = Array.isArray(p.stops) ? p.stops.map(String) : [];
+    return {
+      id: String(p.id), name: String(p.name || "Mon projet"), start: p.start || "", end: p.end || "",
+      stops, notes: String(p.notes || ""), done: !!p.done,
+      // nights[i] : nuits passées à l'étape i · modes[i] : transport pour y arriver ("" = choisi selon la distance)
+      nights: stops.map((_, i) => Math.max(0, Math.min(99, Math.round(+(p.nights || [])[i]) || 0))),
+      modes: stops.map((_, i) => MODES[(p.modes || [])[i]] ? p.modes[i] : "")
+    };
+  });
 }
 function serialize() {
   return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, t: Date.now() };
@@ -112,7 +120,7 @@ function migrate(merged, split) {
   }
   for (const p of state.plans) {
     // une étape sur une région redécoupée devient le pays entier
-    const stops = [...new Set(p.stops.map(id => split[id] ? split[id][0].split("-")[0] : merged[id] || id))];
+    const stops = p.stops.map(id => split[id] ? split[id][0].split("-")[0] : merged[id] || id);
     if (stops.join() !== p.stops.join()) { p.stops = stops; changed = true; }
   }
   if (changed) save();
@@ -194,19 +202,55 @@ const shapeOf = id => { const r = regionById.get(id); return (r && detailOf(r.co
 
 /* ---------- Lieux (pays ou région) ---------- */
 const isCountry = id => byId.has(id);
-const place = id => byId.get(id) || regionById.get(id);
+// une étape peut être une ville : « @région|nom|lon|lat »
+const isCity = id => id[0] === "@";
+const cityStops = new Map();
+function cityStop(id) {
+  if (!cityStops.has(id)) { const [r, n, lon, lat] = id.slice(1).split("|"); cityStops.set(id, { r, lon: +lon, lat: +lat, properties: { n } }); }
+  return cityStops.get(id);
+}
+const cityId = (c, r) => `@${r}|${c.n.replace(/\|/g, " ")}|${c.lon}|${c.lat}`;
+const place = id => isCity(id) ? cityStop(id) : byId.get(id) || regionById.get(id);
 const placeName = id => place(id)?.properties.n || id;
-const placeCountry = id => isCountry(id) ? id : regionById.get(id)?.code;
+const placeRegion = id => isCity(id) ? cityStop(id).r : id;
+const placeCountry = id => isCountry(id) ? id : regionById.get(placeRegion(id))?.code;
 function placeSub(id) {
   if (isCountry(id)) return "";
-  const r = regionById.get(id);
-  return r ? byId.get(r.code)?.properties.n || "" : "";
+  const r = regionById.get(placeRegion(id));
+  if (!r) return "";
+  const c = byId.get(r.code)?.properties.n || "";
+  return isCity(id) && r.properties.n !== placeName(id) ? r.properties.n + " · " + c : c;
 }
 function centroid(id) {
+  if (isCity(id)) { const c = cityStop(id); return [c.lon, c.lat]; }
   const f = byId.get(id);
   return d3.geoCentroid(f ? f.main : regionById.get(id));
 }
-function isVisited(id) { return isCountry(id) ? state.c.has(id) : state.r.has(id); }
+function isVisited(id) { return isCountry(id) ? state.c.has(id) : state.r.has(placeRegion(id)); }
+
+/* ---------- Trajets ---------- */
+const legKm = (a, b) => d3.geoDistance(centroid(a), centroid(b)) * 6371;
+const legMode = (p, i) => p.modes[i] || (legKm(p.stops[i - 1], p.stops[i]) > 700 ? "plane" : "car");
+function legInfo(p, i) {
+  const m = legMode(p, i), crow = legKm(p.stops[i - 1], p.stops[i]);
+  const km = m === "plane" ? crow : crow * 1.25; // par la route, un peu plus long qu'à vol d'oiseau
+  return { m, km, h: m === "plane" ? crow / 750 + .75 : km / MODES[m][2] };
+}
+const fmtKm = km => "≈ " + (km < 10 ? Math.round(km) : Math.round(km / 10) * 10).toLocaleString("fr-FR") + " km";
+function fmtDur(h) {
+  if (h < 1) return "≈ " + Math.max(5, Math.round(h * 12) * 5) + " min";
+  const H = Math.floor(h), M = Math.round((h - H) * 4) * 15;
+  return "≈ " + (M === 60 ? H + 1 + " h" : H + " h" + (M ? " " + String(M).padStart(2, "0") : ""));
+}
+// tracé d'un trajet entre deux points de l'écran : les vols sont des arcs, le reste des lignes
+function legPath(a, b, m) {
+  if (m !== "plane") return `M${a}L${b}`;
+  const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.hypot(dx, dy) || 1;
+  let nx = -dy / d, ny = dx / d;
+  if (ny > 0) { nx = -nx; ny = -ny; } // l'arc monte
+  const c = [(a[0] + b[0]) / 2 + nx * d * .22, (a[1] + b[1]) / 2 + ny * d * .22];
+  return `M${a}Q${c} ${b}`;
+}
 
 /* ---------- Carte ---------- */
 const svg = d3.select("#map");
@@ -302,10 +346,10 @@ function drawMap() {
 
 function drawRoute() {
   const plan = routePlan && state.plans.find(p => p.id === routePlan);
-  const stops = plan ? plan.stops.filter(place) : [];
-  const pts = stops.map(centroid);
-  gRoute.selectAll(".route").data(pts.length > 1 ? [pts] : []).join("path").attr("class", "route")
-    .attr("d", d => path({ type: "LineString", coordinates: d }));
+  const idx = plan ? plan.stops.map((id, i) => i).filter(i => place(plan.stops[i])) : [];
+  const pts = idx.map(i => centroid(plan.stops[i]));
+  gRoute.selectAll(".route").data(idx.slice(1).map((i, j) => [pts[j], pts[j + 1], legMode(plan, i)])).join("path")
+    .attr("class", d => "route m-" + d[2]).attr("d", d => legPath(projection(d[0]), projection(d[1]), d[2]));
   const g = gRoute.selectAll(".stop").data(pts).join(enter => {
     const s = enter.append("g").attr("class", "stop");
     s.append("circle"); s.append("text");
@@ -738,7 +782,7 @@ function renderSheet() {
       </ol>
       <div class="btns"><button class="btn small" id="s-edit">Modifier le projet</button></div>`;
     $("s-close").onclick = () => { routePlan = null; openWorld(); };
-    $("s-edit").onclick = () => { editPlan = { ...plan, stops: [...plan.stops] }; showTab("plans"); };
+    $("s-edit").onclick = () => { editPlan = copyPlan(plan); showTab("plans"); };
   } else if (!state.c.size && !state.w.size) {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
@@ -1080,39 +1124,36 @@ function newCountries(p) {
 }
 function renderPlans() {
   const box = $("plans");
-  if (editPlan) return renderEditor(box);
+  if (editPlan) return renderTrip(box);
   const list = [...state.plans].sort((a, b) => a.done - b.done || (a.start || "9999").localeCompare(b.start || "9999"));
   box.innerHTML = `
     <div class="row between"><h1>Mes projets</h1>${list.length ? `<button class="btn small primary" id="p-new">Nouveau</button>` : ""}</div>
     ${list.length ? `<div class="block">${list.map(p => {
-      const nc = newCountries(p), stops = p.stops.filter(place);
+      const nc = newCountries(p), stops = p.stops.filter(place), t = tripTotals(p);
       return `
       <div class="plan" data-plan="${p.id}">
         <div class="row between"><h4>${esc(p.name)}</h4>${p.done ? `<span class="chip new">Fait ✓</span>` : ""}</div>
         ${planDates(p) ? `<div class="small">${esc(planDates(p))}</div>` : ""}
-        <div class="small">${plural(stops.length, "étape", "étapes")}${!p.done && nc ? ` · <b>${plural(nc, "nouveau pays", "nouveaux pays")}</b> à découvrir` : ""}</div>
+        <div class="small">${plural(stops.length, "étape", "étapes")}${t.nights ? " · " + plural(t.nights, "nuit", "nuits") : ""}${t.km ? " · " + fmtKm(t.km) : ""}${!p.done && nc ? ` · <b>${plural(nc, "nouveau pays", "nouveaux pays")}</b> à découvrir` : ""}</div>
         ${stops.length ? `<div class="chips">${stops.slice(0, 8).map(id => `<span class="chip ${isVisited(id) ? "" : "blue"}">${esc(placeName(id))}</span>`).join("")}${stops.length > 8 ? `<span class="chip">+${stops.length - 8}</span>` : ""}</div>` : ""}
-        ${p.notes ? `<div class="small">${esc(p.notes).replace(/\n/g, "<br>")}</div>` : ""}
         <div class="btns" style="margin-top:4px">
-          <button class="btn small" data-act="route" ${stops.length ? "" : "disabled"}>Voir l'itinéraire</button>
-          <button class="btn small" data-act="edit">Modifier</button>
-          ${!p.done && stops.length ? `<button class="btn small primary" data-act="done">C'est fait ✓</button>` : ""}
+          <button class="btn small primary" data-act="open">Ouvrir le trip</button>
+          ${!p.done && stops.length ? `<button class="btn small" data-act="done">C'est fait ✓</button>` : ""}
         </div>
       </div>`; }).join("")}</div>` : `
     <div class="block empty-state">
-      <p style="margin-top:0">Prépare ton prochain voyage : choisis les étapes, les dates, et vois l'itinéraire sur la carte. Une fois rentré, un appui suffit pour tout ajouter à ta carte.</p>
+      <p style="margin-top:0">Organise ton prochain voyage : les villes étape par étape, les nuits, les vols ou la route en voiture, et ton itinéraire sur une carte. Une fois rentré, un appui suffit pour tout ajouter à ta carte.</p>
       <div class="btns" style="justify-content:center">
         <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
-        <button class="btn" data-start="Tour du monde">Créer un tour du monde</button>
+        <button class="btn" data-start="Road trip">Créer un road trip</button>
       </div>
     </div>`}`;
-  const start = name => { editPlan = { id: Date.now().toString(36), name, start: "", end: "", stops: [], notes: "", done: false, isNew: true }; renderPlans(); };
+  const start = name => { editPlan = { id: Date.now().toString(36), name, start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
   if ($("p-new")) $("p-new").onclick = () => start("Mon prochain trip");
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
     const p = state.plans.find(x => x.id === el.dataset.plan);
-    el.querySelector('[data-act="route"]').onclick = () => showRoute(p.id);
-    el.querySelector('[data-act="edit"]').onclick = () => { editPlan = { ...p, stops: [...p.stops] }; renderPlans(); };
+    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); renderPlans(); $("view-plans").scrollTo(0, 0); };
     const done = el.querySelector('[data-act="done"]');
     if (done) done.onclick = () => {
       if (!done.dataset.armed) {
@@ -1121,82 +1162,174 @@ function renderPlans() {
         return;
       }
       const ts = p.start ? new Date(p.start + "T12:00").getTime() : 0;
-      for (const id of p.stops) isCountry(id) ? setCountry(id, true, ts) : setRegion(id, true, ts);
+      for (const id of p.stops.filter(place)) isCountry(id) ? setCountry(id, true, ts) : setRegion(placeRegion(id), true, ts);
       p.done = true; save(); update();
       toast(`${p.name} : ${plural(p.stops.length, "étape ajoutée", "étapes ajoutées")} à ta carte ✓`, 3000);
     };
   });
 }
-function renderEditor(box) {
+const copyPlan = p => ({ ...p, stops: [...p.stops], nights: [...p.nights], modes: [...p.modes] });
+function tripTotals(p) {
+  let km = 0, h = 0, flights = 0;
+  for (let i = 1; i < p.stops.length; i++) {
+    if (!place(p.stops[i]) || !place(p.stops[i - 1])) continue;
+    const l = legInfo(p, i);
+    km += l.km; h += l.h; if (l.m === "plane") flights++;
+  }
+  return { km, h, flights, nights: d3.sum(p.nights) };
+}
+// dates de chaque étape, à partir du départ et des nuits
+function stopDates(p, i) {
+  if (!p.start) return "";
+  const day = new Date(p.start + "T12:00");
+  day.setDate(day.getDate() + d3.sum(p.nights.slice(0, i)));
+  const f = d => d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  if (!p.nights[i]) return "le " + f(day);
+  const out = new Date(day); out.setDate(out.getDate() + p.nights[i]);
+  return f(day) + " → " + f(out);
+}
+// La page d'un trip : sa carte, les étapes avec les nuits, et le trajet entre deux étapes.
+// Chaque changement est enregistré tout de suite.
+function commitTrip() {
   const p = editPlan;
+  const clean = cleanPlans([{ ...p, name: p.name.trim() || "Mon projet", notes: p.notes.trim() }])[0];
+  const i = state.plans.findIndex(x => x.id === p.id);
+  if (i >= 0) state.plans[i] = clean; else state.plans.push(clean);
+  p.isNew = false;
+  save();
+}
+function renderTrip(box) {
+  const p = editPlan, t = tripTotals(p);
+  const modeSel = i => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
+    `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
   box.innerHTML = `
-    <div class="row between"><h1>${p.isNew ? "Nouveau projet" : "Modifier"}</h1></div>
-    <div class="block stack">
-      <label class="field">Nom<input id="e-name" value="${esc(p.name)}" maxlength="60"></label>
+    <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
+      <input id="e-name" class="trip-name" value="${esc(p.name)}" maxlength="60" aria-label="Nom du trip"></div>
+    <div class="trip-map"><svg id="trip-map" aria-label="Carte du trip"></svg>
+      ${p.stops.length ? "" : `<p>Ajoute tes étapes : l'itinéraire s'affichera ici.</p>`}</div>
+    ${p.stops.length > 1 ? `<div class="trip-sum">
+      <span><b>${p.stops.length}</b> étapes</span><span><b>${t.nights}</b> ${t.nights > 1 ? "nuits" : "nuit"}</span>
+      <span><b>${fmtKm(t.km).slice(2)}</b> au total</span>${t.flights ? `<span><b>${t.flights}</b> ${t.flights > 1 ? "vols" : "vol"}</span>` : ""}</div>` : ""}
+    <div class="block">
       <div class="two">
         <label class="field">Départ<input type="date" id="e-start" value="${esc(p.start)}"></label>
         <label class="field">Retour<input type="date" id="e-end" value="${esc(p.end)}" min="${esc(p.start)}"></label>
       </div>
     </div>
     <div class="block">
-      <h3>Étapes · ${p.stops.length}</h3>
-      <div class="add">
-        <input id="e-q" type="search" placeholder="Ajouter une étape (pays ou région)…" autocomplete="off" aria-label="Ajouter une étape">
+      <h3>Itinéraire</h3>
+      <ol class="itin">${p.stops.map((id, i) => {
+        const l = i && legInfo(p, i);
+        return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km)} · ${fmtDur(l.h)}</span></li>` : ""}
+        <li class="istop" data-i="${i}">
+          <span class="n">${i + 1}</span>
+          <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
+          <span class="nights"><button data-nt="-1" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-nt="1" aria-label="Une nuit de plus">+</button></span>
+          <span class="moves"><button class="icon-btn" data-mv="-1" aria-label="Monter" ${i ? "" : "disabled"}>↑</button><button class="icon-btn" data-mv="1" aria-label="Descendre" ${i < p.stops.length - 1 ? "" : "disabled"}>↓</button><button class="icon-btn" data-rm aria-label="Retirer">✕</button></span>
+        </li>`; }).join("")}
+      </ol>
+      <div class="add" style="margin-top:12px">
+        <input id="e-q" type="search" placeholder="${p.stops.length ? "Étape suivante" : "Première étape"} : ville, région ou pays…" autocomplete="off" aria-label="Ajouter une étape">
         <ul id="e-results" class="card results" hidden></ul>
       </div>
-      <ol class="stops">${p.stops.map((id, i) => `
-        <li data-i="${i}"><span class="n">${i + 1}</span><span class="t">${esc(placeName(id))} <small>${esc(placeSub(id))}</small></span>
-          <button class="icon-btn" data-mv="-1" aria-label="Monter" ${i ? "" : "disabled"}>↑</button>
-          <button class="icon-btn" data-mv="1" aria-label="Descendre" ${i < p.stops.length - 1 ? "" : "disabled"}>↓</button>
-          <button class="icon-btn" data-rm aria-label="Retirer">✕</button></li>`).join("")}
-      </ol>
-      ${!p.stops.length ? `<p class="small" style="margin-top:10px">Ajoute les pays ou régions dans l'ordre du voyage.${state.w.size ? " Tu peux aussi reprendre tes envies :" : ""}</p>
-        ${state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Ajouter mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}` : ""}
+      ${!p.stops.length && state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Reprendre mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}
     </div>
     <div class="block">
-      <label class="field">Notes<textarea id="e-notes" placeholder="Budget, idées, choses à voir…">${esc(p.notes)}</textarea></label>
+      <label class="field">Notes<textarea id="e-notes" placeholder="Hébergements, budget, choses à voir…">${esc(p.notes)}</textarea></label>
     </div>
     <div class="btns" style="margin-top:0">
-      <button class="btn primary" id="e-save">Enregistrer</button>
-      <button class="btn" id="e-cancel">Annuler</button>
-      ${!p.isNew ? `<button class="btn danger" id="e-del">Supprimer</button>` : ""}
+      ${p.stops.length ? `<button class="btn" id="e-big">Voir sur ma carte</button>` : ""}
+      ${!p.isNew ? `<button class="btn danger" id="e-del">Supprimer le trip</button>` : ""}
     </div>`;
-  $("e-name").oninput = e => p.name = e.target.value;
-  $("e-start").onchange = e => { p.start = e.target.value; if (p.end && p.end < p.start) p.end = p.start; $("e-end").min = p.start; $("e-end").value = p.end; };
-  $("e-end").onchange = e => p.end = e.target.value;
-  $("e-notes").oninput = e => p.notes = e.target.value;
-  bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r) => {
-    const id = r || c;
-    if (!p.stops.includes(id)) p.stops.push(id);
-    renderPlans();
+  const redo = () => { commitTrip(); renderPlans(); };
+  $("e-back").onclick = () => { if (!p.isNew || p.stops.length) commitTrip(); editPlan = null; update(); renderPlans(); };
+  $("e-name").onchange = e => { p.name = e.target.value; commitTrip(); };
+  $("e-start").onchange = e => { p.start = e.target.value; if (p.end && p.end < p.start) p.end = p.start; redo(); };
+  $("e-end").onchange = e => { p.end = e.target.value; commitTrip(); };
+  $("e-notes").onchange = e => { p.notes = e.target.value; commitTrip(); };
+  bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
+    const id = city && h?.city ? cityId(h.city, r) : r || c;
+    if (p.stops[p.stops.length - 1] === id) return;
+    p.stops.push(id); p.nights.push(1); p.modes.push("");
+    redo();
     $("e-q").focus();
   });
-  if ($("e-wishes")) $("e-wishes").onclick = () => { p.stops.push(...[...state.w.keys()].filter(id => place(id) && !p.stops.includes(id))); renderPlans(); };
-  box.querySelectorAll(".stops [data-i]").forEach(li => {
+  if ($("e-wishes")) $("e-wishes").onclick = () => {
+    for (const id of state.w.keys()) if (place(id) && !p.stops.includes(id)) { p.stops.push(id); p.nights.push(1); p.modes.push(""); }
+    redo();
+  };
+  box.querySelectorAll("[data-leg]").forEach(sel => sel.onchange = () => { p.modes[+sel.dataset.leg] = sel.value; redo(); });
+  box.querySelectorAll(".istop").forEach(li => {
     const i = +li.dataset.i;
+    li.querySelectorAll("[data-nt]").forEach(b => b.onclick = () => { p.nights[i] = Math.max(0, Math.min(99, p.nights[i] + +b.dataset.nt)); redo(); });
     li.querySelectorAll("[data-mv]").forEach(b => b.onclick = () => {
       const j = i + +b.dataset.mv;
-      [p.stops[i], p.stops[j]] = [p.stops[j], p.stops[i]];
-      renderPlans();
+      for (const a of [p.stops, p.nights]) [a[i], a[j]] = [a[j], a[i]];
+      // les trajets autour des étapes déplacées sont recalculés
+      for (const k of [i, j, i + 1, j + 1]) if (k < p.modes.length) p.modes[k] = "";
+      redo();
     });
-    li.querySelector("[data-rm]").onclick = () => { p.stops.splice(i, 1); renderPlans(); };
+    li.querySelector("[data-rm]").onclick = () => {
+      for (const a of [p.stops, p.nights, p.modes]) a.splice(i, 1);
+      if (i < p.modes.length) p.modes[i] = "";
+      redo();
+    };
   });
-  $("e-save").onclick = () => {
-    const clean = { id: p.id, name: p.name.trim() || "Mon projet", start: p.start, end: p.end, stops: p.stops, notes: p.notes.trim(), done: p.done };
-    const i = state.plans.findIndex(x => x.id === p.id);
-    if (i >= 0) state.plans[i] = clean; else state.plans.push(clean);
-    save(); editPlan = null; update(); renderPlans();
-    toast("Projet enregistré ✓", 1400);
-  };
-  $("e-cancel").onclick = () => { editPlan = null; renderPlans(); };
+  if ($("e-big")) $("e-big").onclick = () => { commitTrip(); const id = p.id; editPlan = null; renderPlans(); showRoute(id); };
   if ($("e-del")) $("e-del").onclick = e => {
     const b = e.currentTarget;
     if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer la suppression"; return; }
     state.plans = state.plans.filter(x => x.id !== p.id);
     if (routePlan === p.id) routePlan = null;
     save(); editPlan = null; update(); renderPlans();
-    toast("Projet supprimé", 1400);
+    toast("Trip supprimé", 1400);
   };
+  drawTripMap(p);
+}
+function drawTripMap(p) {
+  const el = $("trip-map");
+  if (!el) return;
+  const W = el.clientWidth || 360, H = el.clientHeight || 260;
+  const ids = p.stops.map((id, i) => i).filter(i => place(p.stops[i]));
+  const pts = ids.map(i => centroid(p.stops[i]));
+  let proj;
+  if (!pts.length) proj = d3.geoNaturalEarth1().fitExtent([[8, 8], [W - 8, H - 8]], { type: "Sphere" });
+  else {
+    proj = d3.geoMercator().fitExtent([[56, 44], [W - 56, H - 36]], { type: "MultiPoint", coordinates: pts.length > 1 ? pts : [pts[0], pts[0]] });
+    // une seule étape ou des villes très proches : on garde un peu de recul
+    if (pts.length < 2 || proj.scale() > 6000) proj.scale(pts.length < 2 ? 1500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate([W / 2, H / 2]);
+  }
+  const path = d3.geoPath(proj);
+  const svgT = d3.select(el);
+  svgT.selectAll("*").remove();
+  const g = svgT.append("g");
+  const near = f => { const [[x0, y0], [x1, y1]] = path.bounds(f); return x1 > -W && x0 < 2 * W && y1 > -H && y0 < 2 * H; };
+  g.selectAll(".tm-land").data(countries.filter(near)).join("path")
+    .attr("class", d => "tm-land" + (state.c.has(d.id) ? " been" : "")).attr("d", path);
+  // limites des régions des pays traversés
+  const codes = new Set(ids.map(i => placeCountry(p.stops[i])).filter(Boolean));
+  g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path").attr("class", "tm-reg").attr("d", path);
+  const P = pts.map(d => proj(d));
+  g.selectAll(".route").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i)])).join("path")
+    .attr("class", d => "route m-" + d[2]).attr("d", d => legPath(d[0], d[1], d[2]));
+  // un petit avion au milieu de chaque vol, dans le sens du trajet
+  const planes = g.selectAll(".tm-plane").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i)]).filter(d => d[2] === "plane").map(([a, b]) => {
+    const c = legPath(a, b, "plane").split("Q")[1].split(" ")[0].split(",").map(Number);
+    return { x: .25 * a[0] + .5 * c[0] + .25 * b[0], y: .25 * a[1] + .5 * c[1] + .25 * b[1], r: Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI };
+  })).join("text").attr("class", "tm-plane").text("✈");
+  const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, name: placeName(p.stops[ids[j]]) })))
+    .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; });
+  marks.select(".num").text(d => d.n);
+  marks.select(".lbl").text(d => d.name.length > 18 ? d.name.slice(0, 17) + "…" : d.name);
+  const place2 = kk => {
+    marks.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
+    planes.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk}) rotate(${d.r})`);
+    // étiquette à gauche quand une autre étape est juste à droite
+    marks.select(".lbl").attr("x", d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18) ? -15 : 15)
+      .attr("text-anchor", d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18) ? "end" : "start");
+  };
+  place2(1);
+  svgT.call(d3.zoom().scaleExtent([.5, 16]).on("zoom", e => { g.attr("transform", e.transform); place2(e.transform.k); }));
 }
 
 /* ---------- Recherches ---------- */
@@ -1229,12 +1362,12 @@ function bindSearch(input, list, withRegions, label, pick, withSites = false) {
     const s = norm(input.value.trim());
     if (!s) { list.hidden = true; return; }
     const hits = searchHits(s, regions(), withSites);
-    list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}" data-site="${h.site || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
+    list.innerHTML = hits.map((h, i) => `<li><button data-i="${i}" data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}" data-site="${h.site || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
       || `<li class="empty">Aucun résultat</li>`;
     list.hidden = false;
     list.querySelectorAll("button").forEach(b => b.onclick = () => {
       input.value = ""; list.hidden = true; input.blur();
-      pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city, b.dataset.site || null);
+      pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city, b.dataset.site || null, hits[+b.dataset.i]);
     });
   });
   input.addEventListener("keydown", e => { if (e.key === "Escape") { input.value = ""; list.hidden = true; } });
