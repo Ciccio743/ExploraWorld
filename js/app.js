@@ -222,7 +222,7 @@ function placeSub(id) {
   const r = regionById.get(placeRegion(id));
   if (!r) return "";
   const c = byId.get(r.code)?.properties.n || "";
-  return isCity(id) && r.properties.n !== placeName(id) ? r.properties.n + " · " + c : c;
+  return c; // pour une ville, le pays suffit (les noms de régions détaillées sont souvent en langue locale)
 }
 function centroid(id) {
   if (isCity(id)) { const c = cityStop(id); return [c.lon, c.lat]; }
@@ -1235,6 +1235,7 @@ function renderPlans() {
   const box = $("plans");
   if (editPlan) return renderTrip(box);
   box.style.removeProperty("--trip");
+  document.body.classList.remove("trip-open");
   const list = [...state.plans].sort((a, b) => a.done - b.done || (a.start || "9999").localeCompare(b.start || "9999"));
   box.innerHTML = `
     <div class="row between"><h1>Mes projets</h1>${list.length ? `<button class="btn small primary" id="p-new">Nouveau</button>` : ""}</div>
@@ -1257,7 +1258,7 @@ function renderPlans() {
         <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
       </div>
     </div>`}`;
-  const start = name => { editPlan = { id: Date.now().toString(36), name, color: TRIP_COLORS[state.plans.length % TRIP_COLORS.length], start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
+  const start = name => { editPlan = { id: Date.now().toString(36), name, color: TRIP_COLORS[state.plans.length % TRIP_COLORS.length], setup: true, start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
   if ($("p-new")) $("p-new").onclick = () => start("Mon prochain trip");
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
@@ -1307,22 +1308,21 @@ function commitTrip() {
   p.isNew = false;
   save();
 }
+// Un trip se fait en deux temps : d'abord le nom, la couleur et les dates (« Valider »),
+// puis la carte en plein écran où l'on ajoute les étapes.
+let tripPanel = true; // liste des étapes dépliée sous la carte
 function renderTrip(box) {
-  const p = editPlan, t = tripTotals(p);
+  const p = editPlan;
   p.color = p.color || TRIP_COLORS[0];
   box.style.setProperty("--trip", p.color);
-  const modeSel = i => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
-    `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
+  document.body.classList.toggle("trip-open", !p.setup);
+  return p.setup ? renderTripSetup(box) : renderTripMap(box);
+}
+function renderTripSetup(box) {
+  const p = editPlan;
   box.innerHTML = `
-    <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
-      <h1 class="grow" id="e-title">${esc(p.name)}</h1></div>
-    <div class="trip-map ${tripBig ? "big" : ""}"><svg id="trip-map" aria-label="Carte du trip"></svg>
-      <span class="tm-hint">Touche une ville pour l'ajouter</span>
-      <div class="tm-btns"><button class="icon-btn" id="tm-fit" aria-label="Recentrer la carte">◎</button><button class="icon-btn" id="tm-big" aria-label="${tripBig ? "Réduire" : "Agrandir"} la carte">${tripBig ? "⤡" : "⤢"}</button></div>
-      ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}</div>
-    ${p.stops.length > 1 ? `<div class="trip-sum">
-      <span><b>${p.stops.length}</b> étapes</span><span><b>${t.nights}</b> ${t.nights > 1 ? "nuits" : "nuit"}</span>
-      <span><b>${fmtKm(t.km, true)}</b> au total</span>${t.flights ? `<span><b>${t.flights}</b> ${t.flights > 1 ? "vols" : "vol"}</span>` : ""}</div>` : ""}
+    <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour">‹</button>
+      <h1 class="grow" id="e-title">${p.isNew ? "Nouveau trip" : esc(p.name)}</h1></div>
     <div class="block">
       <div class="two">
         <label class="field" style="grid-column: 1 / -1">Nom du trip<input id="e-name" value="${esc(p.name)}" maxlength="60" placeholder="Ex. : Road trip en Italie" enterkeyhint="done"></label>
@@ -1331,56 +1331,91 @@ function renderTrip(box) {
         <div class="field">Départ<button type="button" class="date-btn ${p.start ? "" : "empty"}" id="e-start">${p.start ? fmtDate(p.start) : "Choisir"}</button></div>
         <div class="field">Retour<button type="button" class="date-btn ${p.end ? "" : "empty"}" id="e-end">${p.end ? fmtDate(p.end) : "Choisir"}</button></div>
       </div>
-    </div>
-    <div class="block">
-      <h3>Itinéraire</h3>
-      <ol class="itin">${p.stops.map((id, i) => {
-        const l = i && legInfo(p, i);
-        return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km, l.real)} · ${fmtDur(l.h, l.real)}</span></li>` : ""}
-        <li class="istop" data-i="${i}">
-          <span class="n">${i + 1}</span>
-          <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
-          <span class="nights"><button data-nt="-1" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-nt="1" aria-label="Une nuit de plus">+</button></span>
-          <span class="moves"><button class="icon-btn" data-rm aria-label="Retirer ${esc(placeName(id))}">✕</button>${p.stops.length > 1 ? `<span class="grip" aria-label="Glisser pour changer l'ordre" title="Glisser pour changer l'ordre">≡</span>` : ""}</span>
-        </li>`; }).join("")}
-      </ol>
-      <div class="add" style="margin-top:12px">
-        <input id="e-q" type="search" placeholder="${p.stops.length ? "Étape suivante" : "Première étape"} : ville, région ou pays…" autocomplete="off" aria-label="Ajouter une étape">
-        <ul id="e-results" class="card results" hidden></ul>
-      </div>
-      ${!p.stops.length && state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Reprendre mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}
+      <p class="small" style="margin:10px 0 0">Les dates sont facultatives, tu pourras les changer plus tard.</p>
     </div>
     <div class="block">
       <label class="field">Notes<textarea id="e-notes" placeholder="Hébergements, budget, choses à voir…">${esc(p.notes)}</textarea></label>
     </div>
     <div class="btns" style="margin-top:0">
-      ${p.stops.length ? `<button class="btn" id="e-big">Voir sur ma carte</button>` : ""}
+      <button class="btn primary" id="e-ok">${p.isNew ? "Valider et ouvrir la carte" : "Valider"}</button>
       ${!p.isNew ? `<button class="btn danger" id="e-del">Supprimer le trip</button>` : ""}
     </div>`;
-  const redo = () => { commitTrip(); renderPlans(); };
-  $("e-back").onclick = () => { if (!p.isNew || p.stops.length) commitTrip(); editPlan = null; update(); renderPlans(); };
-  $("e-name").oninput = e => { p.name = e.target.value; $("e-title").textContent = p.name.trim() || "Mon projet"; };
-  $("e-name").onchange = () => commitTrip();
+  $("e-back").onclick = () => {
+    if (p.isNew) { editPlan = null; renderPlans(); return; }
+    p.setup = false; renderPlans();
+  };
+  $("e-name").oninput = e => { p.name = e.target.value; };
   $("e-name").onkeydown = e => { if (e.key === "Enter") e.target.blur(); };
+  $("e-notes").oninput = e => { p.notes = e.target.value; };
   const dates = async toEnd => {
     const r = await pickDates(p.start, p.end, toEnd, d3.sum(p.nights));
     if (!r) return;
     p.start = r.start; p.end = r.end;
-    redo();
+    renderPlans();
   };
   $("e-start").onclick = () => dates(false);
   $("e-end").onclick = () => dates(true);
-  $("e-notes").onchange = e => { p.notes = e.target.value; commitTrip(); };
+  box.querySelectorAll("[data-color]").forEach(b => b.onclick = () => { p.color = b.dataset.color; renderPlans(); });
+  $("e-ok").onclick = () => { p.setup = false; commitTrip(); tripCam = null; renderPlans(); };
+  if ($("e-del")) $("e-del").onclick = e => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer la suppression"; return; }
+    state.plans = state.plans.filter(x => x.id !== p.id);
+    if (routePlan === p.id) routePlan = null;
+    save(); editPlan = null; update(); renderPlans();
+    toast("Trip supprimé", 1400);
+  };
+}
+function renderTripMap(box) {
+  const p = editPlan, t = tripTotals(p);
+  const modeSel = i => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
+    `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
+  const sum = p.stops.length ? [plural(p.stops.length, "étape", "étapes"), t.nights ? plural(t.nights, "nuit", "nuits") : "", t.km ? fmtKm(t.km, true) : "", t.flights ? plural(t.flights, "vol", "vols") : ""].filter(Boolean).join(" · ") : "Aucune étape pour l'instant";
+  box.innerHTML = `
+    <div class="trip-full">
+      <svg id="trip-map" aria-label="Carte du trip"></svg>
+      <div class="tf-top">
+        <button class="icon-btn tf-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
+        <button class="tf-title" id="e-edit" aria-label="Modifier le nom, la couleur et les dates"><b>${esc(p.name)}</b><small>${esc(planDates(p) || "Sans dates")}</small><span>✎</span></button>
+        <button class="icon-btn tf-btn" id="tm-fit" aria-label="Recentrer la carte">◎</button>
+      </div>
+      <div class="tf-panel ${tripPanel ? "open" : ""}">
+        <span class="tm-hint">Touche une ville pour l'ajouter</span>
+        ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}
+        <button class="tf-handle" id="tf-toggle" aria-expanded="${tripPanel}"><i></i><span>${esc(sum)}</span><span class="chev">${tripPanel ? "▾" : "▴"}</span></button>
+        <div class="add">
+          <input id="e-q" type="search" placeholder="${p.stops.length ? "Étape suivante" : "Première étape"} : ville, région ou pays…" autocomplete="off" aria-label="Ajouter une étape">
+          <ul id="e-results" class="card results" hidden></ul>
+        </div>
+        ${tripPanel ? `<div class="tf-list">
+          <ol class="itin">${p.stops.map((id, i) => {
+            const l = i && legInfo(p, i);
+            return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km, l.real)} · ${fmtDur(l.h, l.real)}</span></li>` : ""}
+            <li class="istop" data-i="${i}">
+              <span class="n">${i + 1}</span>
+              <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
+              <span class="nights"><button data-nt="-1" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-nt="1" aria-label="Une nuit de plus">+</button></span>
+              <span class="moves"><button class="icon-btn" data-rm aria-label="Retirer ${esc(placeName(id))}">✕</button>${p.stops.length > 1 ? `<span class="grip" aria-label="Glisser pour changer l'ordre" title="Glisser pour changer l'ordre">≡</span>` : ""}</span>
+            </li>`; }).join("")}
+          </ol>
+          ${!p.stops.length && state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Reprendre mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}
+          ${p.stops.length ? `<div class="btns"><button class="btn small" id="e-big">Voir sur ma carte</button></div>` : ""}
+        </div>` : ""}
+      </div>
+    </div>`;
+  const redo = () => { commitTrip(); renderPlans(); };
+  $("e-back").onclick = () => { if (!p.isNew || p.stops.length) commitTrip(); editPlan = null; document.body.classList.remove("trip-open"); update(); renderPlans(); };
+  $("e-edit").onclick = () => { p.setup = true; renderPlans(); $("view-plans").scrollTo(0, 0); };
+  $("tf-toggle").onclick = () => { tripPanel = !tripPanel; renderPlans(); };
   bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
     const id = city && h?.city ? cityId(h.city, r) : r || c;
     if (!addTripStop(p, id)) return;
     tripCam = null; // la carte se recadre sur la nouvelle étape
     redo();
-    $("e-q").focus();
   });
   if ($("e-wishes")) $("e-wishes").onclick = () => {
     for (const id of state.w.keys()) if (place(id) && !p.stops.includes(id)) { p.stops.push(id); p.nights.push(1); p.modes.push(""); }
-    redo();
+    tripCam = null; redo();
   };
   box.querySelectorAll("[data-leg]").forEach(sel => sel.onchange = () => { p.modes[+sel.dataset.leg] = sel.value; redo(); });
   box.querySelectorAll(".istop").forEach(li => {
@@ -1412,18 +1447,8 @@ function renderTrip(box) {
       };
     };
   });
-  if ($("e-big")) $("e-big").onclick = () => { commitTrip(); const id = p.id; editPlan = null; renderPlans(); showRoute(id); };
-  if ($("e-del")) $("e-del").onclick = e => {
-    const b = e.currentTarget;
-    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer la suppression"; return; }
-    state.plans = state.plans.filter(x => x.id !== p.id);
-    if (routePlan === p.id) routePlan = null;
-    save(); editPlan = null; update(); renderPlans();
-    toast("Trip supprimé", 1400);
-  };
+  if ($("e-big")) $("e-big").onclick = () => { commitTrip(); const id = p.id; editPlan = null; document.body.classList.remove("trip-open"); renderPlans(); showRoute(id); };
   $("tm-fit").onclick = () => { tripCam = null; drawTripMap(p); };
-  box.querySelectorAll("[data-color]").forEach(b => b.onclick = () => { p.color = b.dataset.color; redo(); });
-  $("tm-big").onclick = () => { tripBig = !tripBig; renderPlans(); };
   drawTripMap(p);
 }
 // régions traversées par un trajet routier (calcul gardé en mémoire)
@@ -1485,17 +1510,20 @@ function drawTripMap(p) {
   const el = $("trip-map");
   if (!el) return;
   const W = el.clientWidth || 360, H = el.clientHeight || 260;
+  // la barre du haut et le panneau du bas couvrent une partie de la carte
+  const padT = 90, padB = Math.min(H * .6, (document.querySelector(".tf-panel")?.offsetHeight || 0) + 24);
   const ids = p.stops.map((id, i) => i).filter(i => place(p.stops[i]));
   const pts = ids.map(i => centroid(p.stops[i]));
   let proj, cam = tripCam && tripCam.id === p.id ? tripCam : null;
-  if (cam) proj = d3.geoMercator().scale(cam.scale).center(cam.center).translate([W / 2, H / 2]);
+  if (cam) proj = d3.geoMercator().scale(cam.scale).center(cam.center).translate(cam.mid);
   else {
     const fit = pts.length > 1 ? pts : pts.length ? [pts[0], pts[0]] : [[-150, -50], [170, 72]];
-    proj = d3.geoMercator().fitExtent([[56, 44], [W - 56, H - 36]], { type: "MultiPoint", coordinates: fit });
+    proj = d3.geoMercator().fitExtent([[50, padT], [W - 50, H - padB]], { type: "MultiPoint", coordinates: fit });
+    const mid = [W / 2, (padT + H - padB) / 2];
     // une seule étape ou des villes très proches : on garde un peu de recul
-    if (pts.length && (pts.length < 2 || proj.scale() > 6000)) proj.scale(pts.length < 2 ? 1500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate([W / 2, H / 2]);
-    else proj.center(proj.invert([W / 2, H / 2])).translate([W / 2, H / 2]);
-    cam = tripCam = { id: p.id, scale: proj.scale(), center: proj.center(), t: d3.zoomIdentity };
+    if (pts.length && (pts.length < 2 || proj.scale() > 6000)) proj.scale(pts.length < 2 ? 2500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate(mid);
+    else proj.center(proj.invert(mid)).translate(mid);
+    cam = tripCam = { id: p.id, scale: proj.scale(), center: proj.center(), mid: proj.translate(), t: d3.zoomIdentity };
   }
   const path = d3.geoPath(proj);
   const svgT = d3.select(el);
@@ -1562,7 +1590,7 @@ function drawTripMap(p) {
     const left = d => marks.data().some(o => o !== d && o.x > d.x && (o.x - d.x) * kk < 110 && Math.abs(o.y - d.y) * kk < 18);
     marks.select(".lbl").attr("x", d => left(d) ? -15 : 15).attr("text-anchor", d => left(d) ? "end" : "start");
   };
-  const zoomT = d3.zoom().scaleExtent([.3, 40])
+  const zoomT = d3.zoom().scaleExtent([.3, 600])
     .on("zoom", e => { g.attr("transform", e.transform); place2(e.transform.k); cam.t = e.transform; })
     .on("end", e => drawCities(e.transform));
   svgT.call(zoomT).on("dblclick.zoom", null);
