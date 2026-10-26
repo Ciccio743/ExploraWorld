@@ -780,17 +780,25 @@ const photos = new Map();
 async function fetchPhoto(site) {
   if (photos.has(site.id)) return photos.get(site.id);
   const p = (async () => {
-    const api = (lang, params) => fetch(`https://${lang}.wikipedia.org/w/api.php?${new URLSearchParams({ format: "json", origin: "*", ...params })}`).then(r => r.json());
-    const want = { action: "query", prop: "pageimages|info", piprop: "thumbnail", pithumbsize: "640", inprop: "url" };
-    let d = site.wiki
-      ? await api("fr", { ...want, titles: site.wiki })
-      : await api("en", { ...want, generator: "search", gsrsearch: site.n, gsrlimit: "1" });
+    const lang = site.wiki ? "fr" : "en";
+    const api = params => fetch(`https://${lang}.wikipedia.org/w/api.php?${new URLSearchParams({ format: "json", origin: "*", ...params })}`).then(r => r.json());
+    const want = { action: "query", prop: "pageimages|info", piprop: "thumbnail", pithumbsize: "800", inprop: "url" };
+    let d = site.wiki ? await api({ ...want, titles: site.wiki }) : await api({ ...want, generator: "search", gsrsearch: site.n, gsrlimit: "1" });
     let page = Object.values(d.query?.pages || {})[0];
-    if (!page?.thumbnail && !site.wiki) { // repli : recherche sur le nom sans la ponctuation
-      d = await api("en", { ...want, generator: "search", gsrsearch: site.n.split(/[,(:–]/)[0], gsrlimit: "1" });
+    if (!page?.thumbnail && !site.wiki) { // repli : recherche sur le début du nom
+      d = await api({ ...want, generator: "search", gsrsearch: site.n.split(/[,(:–]/)[0], gsrlimit: "1" });
       page = Object.values(d.query?.pages || {})[0];
     }
-    return page?.thumbnail ? { src: page.thumbnail.source, url: page.fullurl, title: page.title } : null;
+    if (!page || page.missing !== undefined) return null;
+    // les autres photos de l'article : seulement des JPEG assez grands (pas de logos, cartes ni drapeaux)
+    const imgs = await api({ action: "query", titles: page.title, generator: "images", gimlimit: "40",
+      prop: "imageinfo", iiprop: "url|mime|size", iiurlwidth: "800" }).catch(() => ({}));
+    const list = Object.values(imgs.query?.pages || {})
+      .map(x => x.imageinfo?.[0]).filter(i => i && i.mime === "image/jpeg" && i.width >= 600 && i.height >= 400)
+      .map(i => i.thumburl);
+    const first = page.thumbnail?.source;
+    const all = [...new Set([first, ...list].filter(Boolean))].slice(0, 10);
+    return all.length ? { list: all, url: page.fullurl, title: page.title } : null;
   })().catch(() => null);
   photos.set(site.id, p);
   return p;
@@ -800,10 +808,17 @@ async function showPhoto(site) {
   if (!box) return;
   const photo = await fetchPhoto(site);
   if (!photo || selSite !== site.id || $("s-photo") !== box) return;
-  box.innerHTML = `<img src="${esc(photo.src)}" alt="${esc(site.n)}" loading="lazy">
-    <a href="${esc(photo.url)}" target="_blank" rel="noopener">Photo : Wikipédia · ${esc(photo.title)}</a>`;
+  const many = photo.list.length > 1;
+  box.innerHTML = `<div class="slides">${photo.list.map((src, i) => `<img src="${esc(src)}" alt="${esc(site.n)} (${i + 1})" loading="${i ? "lazy" : "eager"}">`).join("")}</div>
+    ${many ? `<div class="dots">${photo.list.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div>` : ""}
+    <a href="${esc(photo.url)}" target="_blank" rel="noopener">Photos : Wikipédia · ${esc(photo.title)}</a>`;
   box.hidden = false;
-  box.querySelector("img").onerror = () => box.hidden = true;
+  const slides = box.querySelector(".slides");
+  slides.querySelectorAll("img").forEach(img => img.onerror = () => { img.remove(); if (!slides.children.length) box.hidden = true; });
+  if (many) slides.onscroll = () => {
+    const i = Math.round(slides.scrollLeft / slides.clientWidth);
+    box.querySelectorAll(".dots i").forEach((d, j) => d.classList.toggle("on", i === j));
+  };
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
 
