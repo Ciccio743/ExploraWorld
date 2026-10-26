@@ -25,7 +25,7 @@ const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet"
 
 const $ = id => document.getElementById(id);
 // à augmenter quand les fichiers de data/ changent, pour que les téléphones ne gardent pas l'ancienne version
-const DATA_VERSION = 4;
+const DATA_VERSION = 5;
 const dataUrl = file => "data/" + file + "?v=" + DATA_VERSION;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -305,7 +305,7 @@ function sizeStops() {
 let cities = [];
 async function loadCities() {
   const d = await fetch(dataUrl("cities.json")).then(r => r.json());
-  cities = d.cities.map(([n, lon, lat, pop, ci]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n) }));
+  cities = d.cities.map(([n, lon, lat, pop, ci, alt]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n), alt: alt ? norm(alt) : "" }));
   drawCities();
 }
 // noms des océans, discrets, à taille constante ; ils s'effacent quand on zoome sur un pays
@@ -967,7 +967,8 @@ function searchHits(s, withRegions) {
   if (s.length >= 3 && hits.length < 12) {
     for (const c of cities) {
       if (hits.length >= 12) break;
-      if (!c.key.startsWith(s) && !(s.length >= 4 && c.key.includes(s))) continue;
+      const match = k => k && (k.startsWith(s) || (s.length >= 4 && k.includes(s)));
+      if (!match(c.key) && !match(c.alt)) continue; // nom français ou nom local
       const r = regionIn(c.code, c.lon, c.lat);
       if (r) hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
     }

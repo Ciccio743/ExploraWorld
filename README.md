@@ -26,7 +26,7 @@ Les marquages sont enregistrés sur l'appareil (localStorage).
 | `data/r/` | contours détaillés de chaque pays, chargés au zoom |
 | `data/merged.json`, `data/split.json` | correspondances anciennes régions → nouvelles, pour reprendre les marques après un changement de découpage |
 | `data/cities.json` | 32 000 villes de plus de 10 000 habitants (GeoNames, CC BY 4.0) |
-| `tools/build-data.sh`, `tools/build-cities.js` | régénèrent `data/` |
+| `tools/build-data.sh`, `tools/build-cities.js` | régénèrent `data/` (noms de villes en français via Natural Earth) |
 | `tools/adm2-countries.txt` | pays découpés plus finement avec geoBoundaries (ADM2) au lieu des régions Natural Earth |
 | `vendor/` | d3 7.9.0 et topojson-client 3.1.0 |
 | `sw.js`, `manifest.webmanifest`, `icons/` | installation et mode hors ligne |
