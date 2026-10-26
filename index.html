@@ -20,7 +20,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=18">
+<link rel="stylesheet" href="css/app.css?v=19">
 </head>
 <body>
 <div id="app">
@@ -84,6 +84,10 @@
           </div>
           <p class="small" style="margin-top:10px">Auto suit le réglage de ton téléphone.</p>
         </div>
+        <div class="block">
+          <h3>Position</h3>
+          <label class="switch"><input type="checkbox" id="set-autoloc">À l'ouverture, me proposer de marquer la région où je suis si je ne l'ai pas encore visitée</label>
+        </div>
         <div class="block stack">
           <h3>Mes données</h3>
           <p class="small">Tes voyages sont enregistrés sur cet appareil. Fais une sauvegarde pour les garder ou les passer sur un autre téléphone.</p>
@@ -120,9 +124,10 @@
   </nav>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
+<div class="card here" id="here" role="dialog" aria-label="Région où tu te trouves" hidden></div>
 
 <script src="vendor/d3.min.js"></script>
 <script src="vendor/topojson-client.min.js"></script>
-<script src="js/app.js?v=18"></script>
+<script src="js/app.js?v=19"></script>
 </body>
 </html>

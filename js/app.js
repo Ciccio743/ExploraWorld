@@ -161,7 +161,7 @@ async function load() {
   drawBase();
   update();
   svg.call(zoom.transform, homeTransform());
-  loadCities().catch(() => {});
+  loadCities().catch(() => {}).then(() => autoLocate());
 }
 
 /* ---------- Contours détaillés d'un pays, chargés au zoom ---------- */
@@ -1095,6 +1095,9 @@ function toast(msg, ms = 2600) {
 /* ---------- Position en direct ---------- */
 const btnLoc = $("btn-locate");
 function regionAt(lon, lat) {
+  // d'abord le pays, puis ses régions (plus rapide que de tester les 10 000 régions)
+  const f = countries.find(f => d3.geoContains(f, [lon, lat]));
+  if (f) { const r = regionIn(f.id, lon, lat); if (r) return r; }
   for (const r of regionById.values()) if (d3.geoContains(r, [lon, lat])) return r;
   return null;
 }
@@ -1121,6 +1124,42 @@ btnLoc.onclick = () => {
     toast(err.code === 1 ? "Autorise l'accès à ta position dans les réglages pour te voir sur la carte." : "Impossible de trouver ta position pour le moment.", 5000);
   }, { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 });
 };
+
+/* ---------- À l'ouverture : proposer la région où l'on se trouve ---------- */
+// Rien n'est coché automatiquement : une carte propose de marquer la région si elle n'est pas encore visitée.
+// On ne demande la permission qu'une fois ; si elle est refusée, on ne redemande pas.
+const autoOn = () => store.get("explora-autoloc") !== "0";
+let lastAuto = 0;
+async function autoLocate() {
+  if (!autoOn() || !navigator.geolocation || !regionById.size || Date.now() - lastAuto < 10 * 60e3) return;
+  try { if ((await navigator.permissions?.query({ name: "geolocation" }))?.state === "denied") return; } catch (e) {}
+  lastAuto = Date.now();
+  navigator.geolocation.getCurrentPosition(p => {
+    const { longitude: lon, latitude: lat } = p.coords;
+    const r = regionAt(lon, lat);
+    if (!r || state.r.has(r.id)) return;
+    let skip = {};
+    try { skip = JSON.parse(store.get("explora-skip") || "{}"); } catch (e) {}
+    if (skip[r.id] && Date.now() - skip[r.id] < 3 * 864e5) return; // « Pas maintenant » : on attend 3 jours
+    const city = cities.filter(c => c.code === r.code && Math.abs(c.lat - lat) < .3 && Math.abs(c.lon - lon) < .4)
+      .sort((a, b) => d3.geoDistance([lon, lat], [a.lon, a.lat]) - d3.geoDistance([lon, lat], [b.lon, b.lat]))[0];
+    const f = byId.get(r.code), fem = FEMININE.has(f.kind);
+    const box = $("here");
+    box.innerHTML = `<p><small>Tu es ici</small><b>${city && norm(city.n) !== norm(r.properties.n) ? esc(city.n) + " · " : ""}${esc(r.properties.n)}</b><small>${esc(f.properties.n)}</small></p>
+      <div class="row"><button class="btn small" id="here-no">Pas maintenant</button><button class="btn small primary" id="here-yes">Marquer ${fem ? "visitée" : "visité"}</button></div>`;
+    box.hidden = false;
+    $("here-yes").onclick = () => {
+      box.hidden = true;
+      setRegion(r.id, true, monthTs(monthValue(Date.now())));
+      showTab("map"); openCountry(r.code, r.id);
+      toast(r.properties.n + " ajouté à ta carte ✓", 1800);
+    };
+    $("here-no").onclick = () => { box.hidden = true; skip[r.id] = Date.now(); store.set("explora-skip", JSON.stringify(skip)); };
+  }, () => {}, { enableHighAccuracy: false, maximumAge: 5 * 60e3, timeout: 15000 });
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") autoLocate(); });
+$("set-autoloc").checked = autoOn();
+$("set-autoloc").onchange = e => { store.set("explora-autoloc", e.target.checked ? "1" : "0"); if (e.target.checked) { lastAuto = 0; autoLocate(); } };
 
 addEventListener("resize", () => {
   if (!countries.length || tab !== "map" || !resize()) return;

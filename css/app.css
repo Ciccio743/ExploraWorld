@@ -293,3 +293,10 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .city circle { fill: var(--ink-2); }
 .city text { font: 500 10px var(--f-body); fill: var(--ink-2); paint-order: stroke; stroke: var(--fog); stroke-opacity: .7; stroke-width: 2.5px; stroke-linejoin: round; }
 .tl-date { font: inherit; font-size: 13px; color: var(--ink-2); padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); max-width: 150px; }
+
+/* proposition de la région où l'on se trouve */
+.here { position: fixed; z-index: 19; left: 12px; right: 12px; max-width: 420px; margin: 0 auto; top: calc(64px + env(safe-area-inset-top, 0px)); padding: 14px 16px; border-color: var(--found); }
+.here p { margin: 0 0 10px; }
+.here b { display: block; font-family: var(--f-display); font-size: 18px; font-weight: 800; line-height: 1.2; }
+.here small { display: block; color: var(--ink-2); font-size: 12px; }
+.here .row { justify-content: flex-end; }
