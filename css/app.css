@@ -3,6 +3,8 @@
 :root {
   --ocean: #c9d9e0;
   --ocean-line: #b6cad3;
+  --ocean-hi: #e3eef2;
+  --ocean-lo: #a9c3cf;
   --fog: #eef1ef;
   --fog-line: #a9b6bb;
   --found: #e8a317;
@@ -27,14 +29,14 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --ocean: #0b1820; --ocean-line: #13252f; --fog: #23343d; --fog-line: #3a4f59;
-  --found: #f5b83d; --found-soft: #6f5422; --found-line: #ffd27a; --on-found: #1d1503;
+  --ocean: #0b1820; --ocean-line: #13252f; --ocean-hi: #15303d; --ocean-lo: #060f15; --fog: #23343d; --fog-line: #3a4f59;
+  --found: #f5b83d; --found-soft: #8a6420; --found-line: #ffd27a; --on-found: #1d1503;
   --ink: #e8eef0; --ink-2: #9db0b8; --bg: #0e1c24; --surface: #16262f;
   --panel: rgba(16, 29, 36, .95); --line: rgba(232, 238, 240, .12);
   --me: #4ea1ff; --wish: #6f9bff; --wish-soft: #26385e; --danger: #ff7a6b; --shadow: 0 6px 24px rgba(0, 0, 0, .4); color-scheme: dark } }
 :root[data-theme="dark"] {
-  --ocean: #0b1820; --ocean-line: #13252f; --fog: #23343d; --fog-line: #3a4f59;
-  --found: #f5b83d; --found-soft: #6f5422; --found-line: #ffd27a; --on-found: #1d1503;
+  --ocean: #0b1820; --ocean-line: #13252f; --ocean-hi: #15303d; --ocean-lo: #060f15; --fog: #23343d; --fog-line: #3a4f59;
+  --found: #f5b83d; --found-soft: #8a6420; --found-line: #ffd27a; --on-found: #1d1503;
   --ink: #e8eef0; --ink-2: #9db0b8; --bg: #0e1c24; --surface: #16262f;
   --panel: rgba(16, 29, 36, .95); --line: rgba(232, 238, 240, .12);
   --me: #4ea1ff; --wish: #6f9bff; --wish-soft: #26385e; --danger: #ff7a6b; --shadow: 0 6px 24px rgba(0, 0, 0, .4); color-scheme: dark }
@@ -50,14 +52,19 @@ body {
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--me); outline-offset: 2px; }
 
-#app { height: 100%; display: grid; grid-template-rows: 1fr auto; }
+#app { position: fixed; inset: 0; display: grid; grid-template-rows: 1fr auto; }
 .views { position: relative; min-height: 0; }
 .view { position: absolute; inset: 0; }
 
 /* ---------- Carte ---------- */
-#view-map { background: var(--ocean); overflow: hidden; }
+#view-map { background: radial-gradient(110% 70% at 50% 40%, var(--ocean-hi) 0%, var(--ocean) 55%, var(--ocean-lo) 100%); overflow: hidden; }
 #map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-.sphere { fill: var(--ocean); }
+.sphere { fill: none; stroke: none; }
+.welcome .w-big { margin: 0; font-size: 14px; color: var(--ink-2); }
+.welcome .w-big b { font-family: var(--f-display); font-weight: 800; font-size: 26px; color: var(--ink); margin-right: 2px; }
+.welcome .w-next { margin: 0; font-size: 12px; color: var(--ink-2); }
+.welcome .w-bar { margin: 8px 0 10px; height: 6px; }
+.welcome .w-bar i { background: linear-gradient(90deg, var(--found-soft), var(--found)); }
 .grat { fill: none; stroke: var(--ocean-line); stroke-width: .6; vector-effect: non-scaling-stroke; }
 .country { fill: var(--fog); stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; }
 .country.visited { fill: var(--found-soft); }

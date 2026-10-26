@@ -148,6 +148,7 @@ async function load() {
   resize();
   drawBase();
   update();
+  svg.call(zoom.transform, homeTransform());
   loadCities().catch(() => {});
 }
 
@@ -341,6 +342,21 @@ function fitBounds([[x0, y0], [x1, y1]], dur = 650, pad = .9) {
 }
 const zoomTo = (feature, dur) => fitBounds(path.bounds(feature), dur);
 
+// Vue d'accueil : en portrait, le monde entier tient dans une bande trop fine.
+// On agrandit pour remplir la hauteur libre, centré sur l'Europe et l'Afrique ; on peut toujours dézoomer.
+let landY = null;
+function homeTransform() {
+  if (!landY) { const b = path.bounds({ type: "FeatureCollection", features: countries }); landY = [b[0][1], b[1][1]]; }
+  const topH = document.querySelector(".top").offsetHeight + 6;
+  const sheetH = document.querySelector(".sheet .card").offsetHeight + 18;
+  const availH = Math.max(140, H - sheetH - topH);
+  const s = Math.max(1, Math.min(1.9, availH / (landY[1] - landY[0])));
+  if (s === 1) return d3.zoomIdentity;
+  const cx = projection([2, 0])[0], cy = (landY[0] + landY[1]) / 2;
+  return d3.zoomIdentity.translate(W / 2, topH + availH / 2).scale(s).translate(-cx, -cy);
+}
+const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
+
 function openCountry(code, regionId = null, focus = false) {
   current = code;
   selected = regionId;
@@ -354,7 +370,7 @@ function openWorld() {
   current = null; selected = null;
   update();
   gCities.selectAll("*").remove();
-  svg.interrupt().transition().duration(reduceMotion() ? 0 : 650).ease(d3.easeCubicOut).call(zoom.transform, d3.zoomIdentity);
+  goHome(650);
 }
 function showRoute(id) {
   const plan = state.plans.find(p => p.id === id);
@@ -363,7 +379,7 @@ function showRoute(id) {
   current = null; selected = null; routePlan = id;
   update();
   const pts = plan.stops.filter(place).map(id => projection(centroid(id)));
-  if (!pts.length) { svg.call(zoom.transform, d3.zoomIdentity); return; }
+  if (!pts.length) { svg.call(zoom.transform, homeTransform()); return; }
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const pad = 30;
   fitBounds([[d3.min(xs) - pad, d3.min(ys) - pad], [d3.max(xs) + pad, d3.max(ys) + pad]], 650, pts.length > 1 ? .85 : .1);
@@ -521,8 +537,12 @@ function renderSheet() {
       <p class="hint">Touche un pays pour zoomer dedans, puis choisis les départements, états ou régions où tu es allé.</p>
       <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
   } else {
-    sheet.innerHTML = `<div class="row between"><p class="hint" style="margin:0">Touche un pays pour zoomer dedans.</p>
-      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div>`;
+    const n = state.c.size, next = MILESTONES.find(m => m > n) || 195, prev = [...MILESTONES].reverse().find(m => m <= n) || 0;
+    sheet.innerHTML = `<div class="welcome">
+      <div class="row between"><p class="w-big"><b>${n}</b> pays sur 195</p><p class="w-next">${n < 195 ? `Prochain palier : ${next}` : "Le monde entier !"}</p></div>
+      <div class="bar w-bar"><i style="width:${n >= 195 ? 100 : (n - prev) / (next - prev) * 100}%"></i></div>
+      <div class="row between"><p class="hint" style="margin:0">Touche un pays pour zoomer dedans.</p>
+      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div></div>`;
   }
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
@@ -945,7 +965,7 @@ function showTab(name) {
   document.querySelectorAll(".tabbar [data-tab]").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
   for (const v of ["map", "progress", "trips", "plans", "settings"]) $("view-" + v).hidden = v !== name;
   if (name === "map" && countries.length && resize()) {
-    svg.call(zoom.transform, d3.zoomIdentity); drawBase(); update();
+    drawBase(); update(); svg.call(zoom.transform, homeTransform());
     if (current) zoomTo(byId.get(current).main, 0);
   }
   if (name === "map") drawCities();
@@ -1008,7 +1028,7 @@ $("btn-reset").onclick = e => {
   if (b.dataset.armed) {
     state = { c: new Map(), r: new Map(), w: new Map(), plans: [] }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
-    update(); svg.call(zoom.transform, d3.zoomIdentity);
+    update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;
   }
   b.dataset.armed = "1"; b.textContent = "Appuie encore pour tout effacer";
@@ -1055,7 +1075,7 @@ btnLoc.onclick = () => {
 
 addEventListener("resize", () => {
   if (!countries.length || tab !== "map" || !resize()) return;
-  svg.call(zoom.transform, d3.zoomIdentity); drawBase(); update();
+  drawBase(); update(); svg.call(zoom.transform, homeTransform());
   if (current) zoomTo(byId.get(current).main, 0);
 });
 
