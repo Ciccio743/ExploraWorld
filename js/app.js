@@ -233,15 +233,56 @@ const legKm = (a, b) => d3.geoDistance(centroid(a), centroid(b)) * 6371;
 const legMode = (p, i) => p.modes[i] || (legKm(p.stops[i - 1], p.stops[i]) > 700 ? "plane" : "car");
 function legInfo(p, i) {
   const m = legMode(p, i), crow = legKm(p.stops[i - 1], p.stops[i]);
+  const road = ROAD[m] && roadRoute(p.stops[i - 1], p.stops[i]);
+  if (road) return { m, km: road.d / 1000, h: road.t / 3600 * ROAD[m], road: road.c, real: true };
   const km = m === "plane" ? crow : crow * 1.25; // par la route, un peu plus long qu'à vol d'oiseau
   return { m, km, h: m === "plane" ? crow / 750 + .75 : km / MODES[m][2] };
 }
-const fmtKm = km => "≈ " + (km < 10 ? Math.round(km) : Math.round(km / 10) * 10).toLocaleString("fr-FR") + " km";
-function fmtDur(h) {
-  if (h < 1) return "≈ " + Math.max(5, Math.round(h * 12) * 5) + " min";
-  const H = Math.floor(h), M = Math.round((h - H) * 4) * 15;
-  return "≈ " + (M === 60 ? H + 1 + " h" : H + " h" + (M ? " " + String(M).padStart(2, "0") : ""));
+const fmtKm = (km, real) => (real ? "" : "≈ ") + (km < 10 ? Math.round(km) : Math.round(km / 10) * 10).toLocaleString("fr-FR") + " km";
+function fmtDur(h, real) {
+  const pre = real ? "" : "≈ ";
+  if (h < 1) return pre + Math.max(5, Math.round(h * 12) * 5) + " min";
+  const H = Math.floor(h), M = Math.round((h - H) * (real ? 12 : 4)) * (real ? 5 : 15);
+  return pre + (M === 60 ? H + 1 + " h" : H + " h" + (M ? " " + String(M).padStart(2, "0") : ""));
 }
+
+/* ---------- Tracé routier ---------- */
+// Trajets en voiture et en bus : le vrai itinéraire par la route (OSRM, données OpenStreetMap),
+// demandé une fois par trajet puis gardé sur le téléphone. Sans réseau, on garde l'estimation.
+const ROAD = { car: 1, bus: 1.3 }; // le bus roule un peu moins vite que la voiture
+const ROUTES_KEY = "explora-routes";
+let routes = {};
+try { routes = JSON.parse(localStorage.getItem(ROUTES_KEY)) || {}; } catch (e) {}
+const roadAsked = new Set();
+let roadQueue = Promise.resolve();
+const roadKey = (a, b) => [centroid(a), centroid(b)].map(([x, y]) => x.toFixed(3) + "," + y.toFixed(3)).join(";");
+function roadRoute(a, b) {
+  const key = roadKey(a, b), r = routes[key];
+  if (r) return r.c ? r : null;
+  if (roadAsked.has(key)) return null;
+  roadAsked.add(key);
+  // une demande à la fois, pour rester discret avec le service gratuit
+  roadQueue = roadQueue.then(async () => {
+    try {
+      const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${key}?overview=simplified&geometries=geojson`);
+      const d = await res.json();
+      const route = d.code === "Ok" && d.routes?.[0];
+      // pas de route possible (une île, un océan…) : on s'en souvient aussi
+      routes[key] = route ? { d: route.distance, t: route.duration, c: route.geometry.coordinates.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]) } : { none: 1 };
+      const keys = Object.keys(routes);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 80))) delete routes[k];
+      try { localStorage.setItem(ROUTES_KEY, JSON.stringify(routes)); } catch (e) {}
+      roadReady();
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 400));
+  });
+  return null;
+}
+// un trajet vient d'arriver : on met à jour ce qui est affiché
+const roadReady = (() => {
+  let t = 0;
+  return () => { clearTimeout(t); t = setTimeout(() => { if (editPlan && !$("view-plans").hidden) renderPlans(); if (routePlan) drawRoute(); }, 150); };
+})();
 // tracé d'un trajet entre deux points de l'écran : les vols sont des arcs, le reste des lignes
 function legPath(a, b, m) {
   if (m !== "plane") return `M${a}L${b}`;
@@ -348,8 +389,8 @@ function drawRoute() {
   const plan = routePlan && state.plans.find(p => p.id === routePlan);
   const idx = plan ? plan.stops.map((id, i) => i).filter(i => place(plan.stops[i])) : [];
   const pts = idx.map(i => centroid(plan.stops[i]));
-  gRoute.selectAll(".route").data(idx.slice(1).map((i, j) => [pts[j], pts[j + 1], legMode(plan, i)])).join("path")
-    .attr("class", d => "route m-" + d[2]).attr("d", d => legPath(projection(d[0]), projection(d[1]), d[2]));
+  gRoute.selectAll(".route").data(idx.slice(1).map((i, j) => [pts[j], pts[j + 1], legMode(plan, i), legInfo(plan, i).road])).join("path")
+    .attr("class", d => "route m-" + d[2]).attr("d", d => d[3] ? path({ type: "LineString", coordinates: d[3] }) : legPath(projection(d[0]), projection(d[1]), d[2]));
   const g = gRoute.selectAll(".stop").data(pts).join(enter => {
     const s = enter.append("g").attr("class", "stop");
     s.append("circle"); s.append("text");
@@ -1206,10 +1247,11 @@ function renderTrip(box) {
     <div class="row trip-top"><button class="icon-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
       <input id="e-name" class="trip-name" value="${esc(p.name)}" maxlength="60" aria-label="Nom du trip"></div>
     <div class="trip-map"><svg id="trip-map" aria-label="Carte du trip"></svg>
-      ${p.stops.length ? "" : `<p>Ajoute tes étapes : l'itinéraire s'affichera ici.</p>`}</div>
+      ${p.stops.length ? "" : `<p>Ajoute tes étapes : l'itinéraire s'affichera ici.</p>`}
+      ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}</div>
     ${p.stops.length > 1 ? `<div class="trip-sum">
       <span><b>${p.stops.length}</b> étapes</span><span><b>${t.nights}</b> ${t.nights > 1 ? "nuits" : "nuit"}</span>
-      <span><b>${fmtKm(t.km).slice(2)}</b> au total</span>${t.flights ? `<span><b>${t.flights}</b> ${t.flights > 1 ? "vols" : "vol"}</span>` : ""}</div>` : ""}
+      <span><b>${fmtKm(t.km, true)}</b> au total</span>${t.flights ? `<span><b>${t.flights}</b> ${t.flights > 1 ? "vols" : "vol"}</span>` : ""}</div>` : ""}
     <div class="block">
       <div class="two">
         <label class="field">Départ<input type="date" id="e-start" value="${esc(p.start)}"></label>
@@ -1220,7 +1262,7 @@ function renderTrip(box) {
       <h3>Itinéraire</h3>
       <ol class="itin">${p.stops.map((id, i) => {
         const l = i && legInfo(p, i);
-        return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km)} · ${fmtDur(l.h)}</span></li>` : ""}
+        return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km, l.real)} · ${fmtDur(l.h, l.real)}</span></li>` : ""}
         <li class="istop" data-i="${i}">
           <span class="n">${i + 1}</span>
           <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
@@ -1310,8 +1352,8 @@ function drawTripMap(p) {
   const codes = new Set(ids.map(i => placeCountry(p.stops[i])).filter(Boolean));
   g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path").attr("class", "tm-reg").attr("d", path);
   const P = pts.map(d => proj(d));
-  g.selectAll(".route").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i)])).join("path")
-    .attr("class", d => "route m-" + d[2]).attr("d", d => legPath(d[0], d[1], d[2]));
+  g.selectAll(".route").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i), legInfo(p, i).road])).join("path")
+    .attr("class", d => "route m-" + d[2]).attr("d", d => d[3] ? d3.line()(d[3].map(c => proj(c))) : legPath(d[0], d[1], d[2]));
   // un petit avion au milieu de chaque vol, dans le sens du trajet
   const planes = g.selectAll(".tm-plane").data(ids.slice(1).map((i, j) => [P[j], P[j + 1], legMode(p, i)]).filter(d => d[2] === "plane").map(([a, b]) => {
     const c = legPath(a, b, "plane").split("Q")[1].split(" ")[0].split(",").map(Number);
