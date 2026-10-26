@@ -65,7 +65,7 @@ button { font: inherit; color: inherit; }
 .welcome .w-next { margin: 0; font-size: 12px; color: var(--ink-2); }
 .welcome .w-bar { margin: 8px 0 10px; height: 6px; }
 .welcome .w-bar i { background: linear-gradient(90deg, var(--found-soft), var(--found)); }
-.grat { fill: none; stroke: var(--ocean-line); stroke-width: .6; vector-effect: non-scaling-stroke; }
+.ocean-name { font: italic 500 9.5px var(--f-body); letter-spacing: .16em; text-transform: uppercase; fill: var(--ink-2); opacity: .38; pointer-events: none; transition: opacity .3s; }
 .country { fill: var(--fog); stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; }
 .country.visited { fill: var(--found-soft); }
 .country.active { fill: none; stroke: none; }

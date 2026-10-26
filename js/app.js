@@ -210,6 +210,7 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   if (me) drawMe();
   if (routePlan) sizeStops();
   gCities.selectAll(".city").attr("transform", cityTransform);
+  gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
 }).on("end", drawCities);
 svg.call(zoom).on("dblclick.zoom", null);
@@ -227,7 +228,10 @@ function resize() {
 function drawBase() {
   for (const g of [gBase, gOverlay, gDetail, gRoute]) g.selectAll("*").remove();
   gBase.append("path").attr("class", "sphere").attr("d", path({ type: "Sphere" }));
-  gBase.append("path").attr("class", "grat").attr("d", path(d3.geoGraticule10()));
+  gBase.selectAll(".ocean-name").data(OCEANS).join("text")
+    .attr("class", "ocean-name").attr("text-anchor", "middle")
+    .attr("transform", oceanTransform)
+    .call(t => { t.append("tspan").attr("x", 0).attr("dy", "-.2em").text("Océan"); t.append("tspan").attr("x", 0).attr("dy", "1.25em").text(d => d[0]); });
   gBase.selectAll(".country").data(countries, d => d.id).join("path")
     .attr("class", "country").attr("d", path)
     .on("click", (e, d) => { e.stopPropagation(); if (d.id !== current) openCountry(d.id); })
@@ -285,6 +289,10 @@ async function loadCities() {
   cities = d.cities.map(([n, lon, lat, pop, ci]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n) }));
   drawCities();
 }
+// noms des océans, discrets, à taille constante ; ils s'effacent quand on zoome sur un pays
+const OCEANS = [["Atlantique", -44, 27], ["Atlantique", -14, -22], ["Pacifique", -135, 5], ["Pacifique", 170, 20],
+  ["Indien", 78, -22], ["Austral", 20, -60]];
+const oceanTransform = d => { const [x, y] = projection([d[1], d[2]]); return `translate(${x},${y}) scale(${1 / k})`; };
 const cityTransform = d => `translate(${d.px},${d.py}) scale(${1 / k})`;
 function drawCities() {
   if (!cities.length || tab !== "map" || !W) return;
