@@ -413,7 +413,7 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 /* Carte du trip en plein écran */
 .trip-full { position: fixed; inset: 0; z-index: 15; background: var(--ocean); }
 .trip-full > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-.tf-top { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; background: linear-gradient(var(--bg), color-mix(in srgb, var(--bg) 0%, transparent)); }
+.tf-top { position: absolute; left: 0; right: 0; top: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px; background: linear-gradient(var(--bg), color-mix(in srgb, var(--bg) 0%, transparent)); }
 .tf-btn { width: 42px; height: 42px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 22px; flex: none; box-shadow: var(--shadow); }
 .tf-title { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; text-align: left; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px 12px; cursor: pointer; box-shadow: var(--shadow); }
 .tf-title b { font: 800 17px/1.2 var(--f-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -424,9 +424,12 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .tf-handle i { position: absolute; left: 50%; top: 6px; width: 36px; height: 4px; margin-left: -18px; border-radius: 4px; background: var(--line); }
 .tf-handle span:first-of-type { flex: 1; font-weight: 600; }
 .tf-handle .chev { color: var(--ink-2); }
-.tf-panel .add input { background: var(--bg); }
-.tf-panel .results { top: auto; bottom: 100%; margin: 0 0 6px; max-height: 40vh; }
 .tf-list { max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; margin-top: 6px; }
 .tf-list .btns { margin-top: 8px; }
 .tm-hint { position: absolute; left: 12px; bottom: calc(100% + 8px); font-size: 12px; color: var(--ink-2); background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 4px 10px; border-radius: 999px; pointer-events: none; }
 .tf-panel .tm-credit { bottom: calc(100% + 8px); }
+.trip-open .tabbar { display: none; }
+.tf-search { flex: 1 0 100%; }
+.tf-search input { box-shadow: var(--shadow); padding: 11px 14px; }
+.tf-search .results { max-height: 45vh; }
+.trip-open .toast { top: auto; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }

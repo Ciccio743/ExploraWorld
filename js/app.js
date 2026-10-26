@@ -1378,15 +1378,15 @@ function renderTripMap(box) {
         <button class="icon-btn tf-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
         <button class="tf-title" id="e-edit" aria-label="Modifier le nom, la couleur et les dates"><b>${esc(p.name)}</b><small>${esc(planDates(p) || "Sans dates")}</small><span>✎</span></button>
         <button class="icon-btn tf-btn" id="tm-fit" aria-label="Recentrer la carte">◎</button>
-      </div>
-      <div class="tf-panel ${tripPanel ? "open" : ""}">
-        <span class="tm-hint">Touche une ville pour l'ajouter</span>
-        ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}
-        <button class="tf-handle" id="tf-toggle" aria-expanded="${tripPanel}"><i></i><span>${esc(sum)}</span><span class="chev">${tripPanel ? "▾" : "▴"}</span></button>
-        <div class="add">
-          <input id="e-q" type="search" placeholder="${p.stops.length ? "Étape suivante" : "Première étape"} : ville, région ou pays…" autocomplete="off" aria-label="Ajouter une étape">
+        <div class="add tf-search">
+          <input id="e-q" type="search" placeholder="🔍 Chercher une ville, une région, un pays…" autocomplete="off" aria-label="Chercher une étape">
           <ul id="e-results" class="card results" hidden></ul>
         </div>
+      </div>
+      <div class="tf-panel ${tripPanel ? "open" : ""}">
+        <span class="tm-hint">Touche une ville ou cherche-la en haut</span>
+        ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}
+        <button class="tf-handle" id="tf-toggle" aria-expanded="${tripPanel}"><i></i><span>${esc(sum)}</span><span class="chev">${tripPanel ? "▾" : "▴"}</span></button>
         ${tripPanel ? `<div class="tf-list">
           <ol class="itin">${p.stops.map((id, i) => {
             const l = i && legInfo(p, i);
@@ -1511,7 +1511,7 @@ function drawTripMap(p) {
   if (!el) return;
   const W = el.clientWidth || 360, H = el.clientHeight || 260;
   // la barre du haut et le panneau du bas couvrent une partie de la carte
-  const padT = 90, padB = Math.min(H * .6, (document.querySelector(".tf-panel")?.offsetHeight || 0) + 24);
+  const padT = (document.querySelector(".tf-top")?.offsetHeight || 80) + 16, padB = Math.min(H * .6, (document.querySelector(".tf-panel")?.offsetHeight || 0) + 24);
   const ids = p.stops.map((id, i) => i).filter(i => place(p.stops[i]));
   const pts = ids.map(i => centroid(p.stops[i]));
   let proj, cam = tripCam && tripCam.id === p.id ? tripCam : null;
@@ -1620,7 +1620,9 @@ function searchHits(s, withRegions, withSites = false) {
     if (hits.length >= 12) break;
     if (st.key.includes(s)) hits.push({ n: st.n, k: (st.wonder ? "7 merveilles · " : "Patrimoine mondial · ") + (byId.get(siteHome(st))?.properties.n || ""), c: siteHome(st), site: st.id });
   }
-  return hits.slice(0, 12);
+  // le nom exact d'abord, puis ceux qui commencent par la recherche
+  const score = h => { const n = norm(h.n); return n === s ? 0 : n.startsWith(s) ? 1 : 2; };
+  return hits.sort((a, b) => score(a) - score(b)).slice(0, 12);
 }
 function bindSearch(input, list, withRegions, label, pick, withSites = false) {
   const regions = typeof withRegions === "function" ? withRegions : () => withRegions;
