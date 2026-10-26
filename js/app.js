@@ -53,6 +53,7 @@ let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
 let sheetMore = false; // panneau du pays déplié
+let sheetMonth = ""; // mois choisi avant de marquer le pays
 let askRegions = null; // pays tout juste marqué : on propose d'en choisir les régions
 let me = null, watchId = null;
 
@@ -478,7 +479,7 @@ function homeTransform() {
 const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
 
 function openCountry(code, regionId = null, focus = false) {
-  if (code !== current) { sheetMore = false; selSite = null; }
+  if (code !== current) { sheetMore = false; selSite = null; sheetMonth = ""; }
   current = code;
   selected = regionId;
   routePlan = null;
@@ -546,6 +547,41 @@ function toggleRegion(id) {
 function monthTs(value) {
   const [y, m] = (value || "").split("-").map(Number);
   return y && m ? new Date(y, m - 1, 15, 12).getTime() : 0;
+}
+// Choix du mois dans une petite fenêtre : sur iPhone, le champ « mois » natif enregistre
+// le mois en cours dès qu'on le touche, d'où des dates choisies sans le vouloir.
+const monthLabel = v => { const [y, m] = (v || "").split("-").map(Number); return y && m ? `${MONTHS[m - 1]} ${y}` : ""; };
+const monthBtn = (attrs, v, empty = "Ajouter une date") =>
+  `<button type="button" class="month-btn ${v ? "" : "empty"}" ${attrs} data-v="${v}">${v ? monthLabel(v) : empty}</button>`;
+function pickMonth(v, title = "Date de visite") {
+  return new Promise(done => {
+    const now = new Date();
+    const [y0, m0] = v ? v.split("-").map(Number) : [now.getFullYear(), now.getMonth() + 1];
+    const back = document.createElement("div");
+    back.className = "mp-back";
+    back.innerHTML = `<div class="card mp" role="dialog" aria-label="${esc(title)}">
+      <h3>${esc(title)}</h3>
+      <div class="two">
+        <select id="mp-m" aria-label="Mois">${MONTHS.map((n, i) => `<option value="${i + 1}" ${i + 1 === m0 ? "selected" : ""}>${cap(n)}</option>`).join("")}</select>
+        <select id="mp-y" aria-label="Année">${d3.range(now.getFullYear(), 1939, -1).map(y => `<option ${y === y0 ? "selected" : ""}>${y}</option>`).join("")}</select>
+      </div>
+      <div class="btns">
+        <button class="btn primary" data-mp="ok">Enregistrer</button>
+        ${v ? `<button class="btn" data-mp="none">Effacer la date</button>` : ""}
+        <button class="btn" data-mp="cancel">Annuler</button>
+      </div></div>`;
+    document.body.append(back);
+    const close = r => { back.remove(); done(r); };
+    back.onclick = e => { if (e.target === back) close(null); };
+    back.querySelectorAll("[data-mp]").forEach(b => b.onclick = () => {
+      if (b.dataset.mp === "cancel") return close(null);
+      if (b.dataset.mp === "none") return close("");
+      let y = +$("mp-y").value, m = +$("mp-m").value;
+      // pas de date dans le futur
+      if (y === now.getFullYear() && m > now.getMonth() + 1) m = now.getMonth() + 1;
+      close(y + "-" + String(m).padStart(2, "0"));
+    });
+  });
 }
 function setVisitMonth(code, value) {
   if (!state.c.has(code)) return;
@@ -656,7 +692,7 @@ function renderSheet() {
         <button class="btn small" id="s-later">Plus tard</button>
       </div>` : ""}
       ${sheetMore ? `
-      <label class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
+      <div class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>
       ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
@@ -665,7 +701,7 @@ function renderSheet() {
     $("s-back").onclick = openWorld;
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
     if ($("s-been")) $("s-been").onclick = () => {
-      setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0);
+      setCountry(current, !been, $("s-date") ? monthTs($("s-date").dataset.v) : 0);
       // une fois le pays marqué, on propose de préciser les régions
       askRegions = !been && n > 1 ? current : null;
       update();
@@ -673,14 +709,19 @@ function renderSheet() {
     if ($("s-later")) $("s-later").onclick = () => { askRegions = null; renderSheet(); };
     if ($("s-unbeen")) $("s-unbeen").onclick = () => { if (confirm(`Retirer ${f.properties.n} et toutes ses régions de ta carte ?`)) { setCountry(current, false); update(); } };
     $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
-    if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
+    if ($("s-date")) $("s-date").onclick = async () => {
+      const v = await pickMonth($("s-date").dataset.v, been ? "Date de visite" : "Quand ?");
+      if (v === null) return;
+      if (been) setVisitMonth(current, v); else sheetMonth = v;
+      renderSheet();
+    };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
     if (site) {
       $("s-site").onclick = () => { toggleSite(site.id); update(); };
       showPhoto(site);
     }
     if (sel) $("s-mark").onclick = () => {
-      const month = $("s-date") && $("s-date").value;
+      const month = $("s-date") && $("s-date").dataset.v;
       toggleRegion(sel.id);
       if (!been && month && state.c.has(current)) setVisitMonth(current, month);
       update();
@@ -930,7 +971,7 @@ function tripItem(f) {
       </button>
       ${open ? `
       <div class="trip-body">
-        <label class="when">Date de visite (facultatif) <input type="month" data-when value="${monthValue(state.c.get(f.id))}" max="${monthValue(Date.now())}"></label>
+        <div class="when">Date de visite (facultatif) ${monthBtn("data-when", monthValue(state.c.get(f.id)))}</div>
         <div class="trip-actions">
           <button class="btn small" data-act="map">Voir sur la carte</button>
           <button class="btn small danger" data-act="remove">Retirer ce pays</button>
@@ -962,7 +1003,11 @@ function bindTrip(el) {
     setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = "Retirer ce pays"; } }, 3500);
   };
   const when = el.querySelector("[data-when]");
-  if (when) when.onchange = () => setVisitMonth(code, when.value);
+  if (when) when.onclick = async () => {
+    const v = await pickMonth(when.dataset.v);
+    if (v === null) return;
+    setVisitMonth(code, v); renderTrips();
+  };
   el.querySelectorAll("[data-r]").forEach(cb => cb.onchange = () => {
     setRegion(cb.dataset.r, cb.checked);
     const v = visitedIn(code);
@@ -1005,11 +1050,14 @@ function renderTrips() {
       <div class="year">${year}</div>
       <ul class="tl">${list.map(([id, t]) => `
         <li><button class="btn small" style="border:0;padding:4px 0" data-open="${id}">${esc(byId.get(id).properties.n)}</button>
-        <input type="month" class="tl-date" data-tl="${id}" value="${monthValue(t)}" max="${monthValue(Date.now())}" aria-label="Date de visite"></li>`).join("")}
+        ${monthBtn(`class="tl-date" data-tl="${id}" aria-label="Date de visite"`, monthValue(t))}</li>`).join("")}
       </ul>`).join("") + `<p class="small">La date est facultative : touche le mois à côté d'un pays pour la choisir ou la changer.</p>`
       : `<div class="empty-state">Ta frise se remplira avec tes voyages.</div>`;
     box.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { showTab("map"); openCountry(b.dataset.open); });
-    box.querySelectorAll("[data-tl]").forEach(i => i.onchange = () => { setVisitMonth(i.dataset.tl, i.value); renderTrips(); });
+    box.querySelectorAll("[data-tl]").forEach(b => b.onclick = async () => {
+      const v = await pickMonth(b.dataset.v, byId.get(b.dataset.tl).properties.n);
+      if (v !== null) { setVisitMonth(b.dataset.tl, v); renderTrips(); }
+    });
   }
 }
 document.querySelectorAll("[data-tv]").forEach(b => b.onclick = () => { tripView = b.dataset.tv; renderTrips(); });
