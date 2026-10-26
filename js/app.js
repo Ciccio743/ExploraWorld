@@ -1,5 +1,6 @@
 (() => {
 const WORLD_COUNTRIES = 195; // membres de l'ONU + Vatican + Palestine
+const CAT = { c: "culturel", n: "naturel", m: "mixte" };
 const MILESTONES = [1, 5, 10, 20, 30, 50, 75, 100, 150, 195];
 const KIND = {
   "Metropolitan department": "départements", "Overseas department": "départements", "Department": "départements",
@@ -25,7 +26,7 @@ const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet"
 
 const $ = id => document.getElementById(id);
 // à augmenter quand les fichiers de data/ changent, pour que les téléphones ne gardent pas l'ancienne version
-const DATA_VERSION = 5;
+const DATA_VERSION = 6;
 const dataUrl = file => "data/" + file + "?v=" + DATA_VERSION;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -41,8 +42,12 @@ const today = () => { const d = new Date(); d.setHours(12, 0, 0, 0); return d; }
 let countries = [], byId = new Map(), regionsBy = new Map(), regionById = new Map();
 let worldArea = 0;
 const neighbors = new Map(); // pays → pays voisins (frontière commune)
+let sites = [], siteById = new Map(), sitesBy = new Map(), selSite = null; // patrimoine mondial UNESCO
+let iso2 = {};
+// drapeau emoji à partir du code ISO à 2 lettres
+const flag = code => iso2[code] ? [...iso2[code]].map(ch => String.fromCodePoint(0x1F1A5 + ch.charCodeAt(0))).join("") : "";
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
-let state = { c: new Map(), r: new Map(), w: new Map(), plans: [] };
+let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [] };
 let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
@@ -69,12 +74,12 @@ function cleanPlans(list) {
   }));
 }
 function serialize() {
-  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), plans: state.plans, t: Date.now() };
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, t: Date.now() };
 }
 function save() { store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
-  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), plans: cleanPlans(d.plans) };
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans) };
 } catch (e) {}
 quick = store.get("explora-quick") === "1";
 // les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
@@ -162,6 +167,7 @@ async function load() {
   update();
   svg.call(zoom.transform, homeTransform());
   loadCities().catch(() => {}).then(() => autoLocate());
+  loadSites().catch(() => {});
 }
 
 /* ---------- Contours détaillés d'un pays, chargés au zoom ---------- */
@@ -210,6 +216,7 @@ const gDetail = root.append("g").attr("class", "detail");
 const gOutline = root.append("g");
 const gSel = root.append("g");
 const gRoute = root.append("g");
+const gSites = root.append("g");
 const gCities = root.append("g");
 const gMe = root.append("g");
 const projection = d3.geoNaturalEarth1();
@@ -223,6 +230,7 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   if (me) drawMe();
   if (routePlan) sizeStops();
   gCities.selectAll(".city").attr("transform", cityTransform);
+  gSites.selectAll(".site").attr("transform", siteTransform);
   gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
 }).on("end", drawCities);
@@ -277,6 +285,14 @@ function drawMap() {
   ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id));
   gOutline.selectAll("path").data(current ? [det ? det.outline : byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
   gSel.selectAll("path").data(selected ? [shapeOf(selected)] : [], d => d.id + (d.detail ? "+" : "")).join("path").attr("class", "selected").attr("d", path);
+  // sites du patrimoine mondial du pays ouvert : petits losanges, dorés une fois visités
+  gSites.selectAll(".site").data(current ? (sitesBy.get(current) || []).filter(st => regionIn(current, st.lon, st.lat) || st.codes.length === 1) : [], d => d.id).join(
+    enter => enter.append("g").attr("class", "site").call(g => {
+      g.append("circle").attr("r", 13).attr("class", "hit");
+      g.append("path").attr("d", "M0,-7L7,0L0,7L-7,0Z");
+    }).on("click", (e, d) => { e.stopPropagation(); selSite = selSite === d.id ? null : d.id; selected = null; update(); })
+      .on("pointermove", (e, d) => showTip(e, d.n)).on("pointerleave", () => tip.hidden = true)
+  ).attr("transform", siteTransform).classed("visited", d => state.u.has(d.id)).classed("on", d => d.id === selSite).raise();
   drawRoute();
 }
 
@@ -303,6 +319,19 @@ function sizeStops() {
 /* ---------- Villes ---------- */
 // GeoNames (CC BY 4.0) : villes de plus de 10 000 habitants, triées de la plus peuplée à la moins peuplée
 let cities = [];
+// pays où se trouve le point du site (un site transfrontalier est listé dans plusieurs pays)
+const short = (t, n = 48) => t.length > n ? t.slice(0, n - 1).replace(/[\s,;–-]+\S*$/, "") + "…" : t;
+const siteHome = st => st.codes.find(c => regionIn(c, st.lon, st.lat)) || st.codes[0];
+async function loadSites() {
+  const [list, iso] = await Promise.all([fetch(dataUrl("unesco.json")).then(r => r.json()), fetch(dataUrl("iso2.json")).then(r => r.json())]);
+  iso2 = iso;
+  sites = list.map(([id, n, lon, lat, cat, year, codes]) => ({ id: String(id), n, lon, lat, cat, year, codes, key: norm(n) }));
+  for (const st of sites) {
+    siteById.set(st.id, st);
+    for (const c of st.codes) { if (!sitesBy.has(c)) sitesBy.set(c, []); sitesBy.get(c).push(st); }
+  }
+  update();
+}
 async function loadCities() {
   const d = await fetch(dataUrl("cities.json")).then(r => r.json());
   cities = d.cities.map(([n, lon, lat, pop, ci, alt]) => ({ n, lon, lat, pop, code: d.countries[ci], key: norm(n), alt: alt ? norm(alt) : "" }));
@@ -312,6 +341,7 @@ async function loadCities() {
 const OCEANS = [["Atlantique", -44, 27], ["Atlantique", -14, -22], ["Pacifique", -135, 5], ["Pacifique", 170, 20],
   ["Indien", 78, -22], ["Austral", 20, -60]];
 const oceanTransform = d => { const [x, y] = projection([d[1], d[2]]); return `translate(${x},${y}) scale(${1 / k})`; };
+const siteTransform = d => { const [x, y] = projection([d.lon, d.lat]); return `translate(${x},${y}) scale(${1 / k})`; };
 const cityTransform = d => `translate(${d.px},${d.py}) scale(${1 / k})`;
 function drawCities() {
   if (!cities.length || tab !== "map" || !W) return;
@@ -385,7 +415,7 @@ function homeTransform() {
 const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
 
 function openCountry(code, regionId = null, focus = false) {
-  if (code !== current) sheetMore = false;
+  if (code !== current) { sheetMore = false; selSite = null; }
   current = code;
   selected = regionId;
   routePlan = null;
@@ -396,7 +426,7 @@ function openCountry(code, regionId = null, focus = false) {
   for (const n of neighbors.get(code) || []) ensureDetail(n).then(d => { if (d && current === code) drawMap(); });
 }
 function openWorld() {
-  current = null; selected = null;
+  current = null; selected = null; selSite = null;
   update();
   gCities.selectAll("*").remove();
   goHome(650);
@@ -413,11 +443,12 @@ function showRoute(id) {
   const pad = 30;
   fitBounds([[d3.min(xs) - pad, d3.min(ys) - pad], [d3.max(xs) + pad, d3.max(ys) + pad]], 650, pts.length > 1 ? .85 : .1);
 }
-svg.on("click", () => { if (selected) { selected = null; update(); } else if (current) openWorld(); });
+svg.on("click", () => { if (selected || selSite) { selected = null; selSite = null; update(); } else if (current) openWorld(); });
 $("btn-world").onclick = () => { routePlan = null; openWorld(); };
 
 /* ---------- Marquage ---------- */
 function tapRegion(r) {
+  selSite = null;
   if (quick) { toggleRegion(r.id); selected = r.id; update(); return; }
   selected = selected === r.id ? null : r.id;
   update();
@@ -431,6 +462,16 @@ function setRegion(id, on, ts = 0) {
     state.w.delete(id);
   } else state.r.delete(id);
   save();
+}
+// un site visité implique la région et le pays où il se trouve
+function toggleSite(id) {
+  const st = siteById.get(id);
+  if (state.u.has(id)) { state.u.delete(id); save(); toast(short(st.n) + " retiré", 1300); return; }
+  state.u.set(id, 0);
+  const r = st.codes.map(c => regionIn(c, st.lon, st.lat)).find(Boolean);
+  if (r) setRegion(r.id, true); else if (st.codes.length === 1) setCountry(st.codes[0], true);
+  save();
+  toast(short(st.n) + " ajouté à ta carte ✓", 1500);
 }
 function toggleRegion(id) {
   const on = !state.r.has(id);
@@ -474,7 +515,7 @@ function stats() {
     if (c === "Europe") europe++;
     if (f.nreg > 1 && visitedIn(id) === f.nreg) complete++;
   }
-  return { n: state.c.size, regions: state.r.size, continents: conts.size, cont, europe, complete, pct: worldPct(), plans: state.plans.length, wish: state.w.size };
+  return { n: state.c.size, regions: state.r.size, continents: conts.size, cont, europe, complete, pct: worldPct(), plans: state.plans.length, wish: state.w.size, sites: state.u.size };
 }
 
 /* ---------- Badges ---------- */
@@ -498,7 +539,10 @@ const BADGES = [
   { m: "5%", name: "Bourlingueur", desc: "5 % du monde", ok: s => s.pct >= 5 },
   { m: "10%", name: "Conquérant", desc: "10 % du monde", ok: s => s.pct >= 10 },
   { m: "★", name: "Rêveur", desc: "5 envies notées", ok: s => s.wish >= 5 },
-  { m: "✈", name: "Organisateur", desc: "Un projet de voyage", ok: s => s.plans >= 1 }
+  { m: "✈", name: "Organisateur", desc: "Un projet de voyage", ok: s => s.plans >= 1 },
+  { m: "◆", name: "Patrimoine", desc: "1 site UNESCO", ok: s => s.sites >= 1 },
+  { m: "◆10", name: "Gardien du patrimoine", desc: "10 sites UNESCO", ok: s => s.sites >= 10 },
+  { m: "◆50", name: "Merveilles du monde", desc: "50 sites UNESCO", ok: s => s.sites >= 50 }
 ];
 
 /* ---------- Mise à jour de l'écran ---------- */
@@ -518,7 +562,7 @@ function renderSheet() {
   const plan = routePlan && state.plans.find(p => p.id === routePlan);
   if (current) {
     const f = byId.get(current), n = f.nreg, v = visitedIn(current), been = state.c.has(current), wish = state.w.has(current);
-    const sel = selected && regionById.get(selected);
+    const sel = selected && regionById.get(selected), site = selSite && siteById.get(selSite);
     const selOn = sel && state.r.has(sel.id), selWish = sel && state.w.has(sel.id);
     const one = SINGULAR[f.kind] || "endroit", fem = FEMININE.has(f.kind);
     const un = (fem ? "une " : "un ") + one, le = fem ? "la" : "le";
@@ -526,17 +570,21 @@ function renderSheet() {
     sheet.innerHTML = `
       <div class="row cmp">
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
-        <div class="cname grow"><b>${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
+        <div class="cname grow"><b>${flag(current)} ${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
         ${n > 1 && (been || sel) ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
-      ${sel ? `
+      ${site ? `
+      <div class="pick">
+        <div class="name"><b>${esc(site.n)}</b><small>Patrimoine mondial · ${CAT[site.cat]} · ${site.year}${state.u.has(site.id) ? " · visité" : ""}</small></div>
+        <button class="btn small ${state.u.has(site.id) ? "done" : "primary"}" id="s-site">${state.u.has(site.id) ? "Retirer" : "Marquer visité"}</button>
+      </div>` : sel ? `
       <div class="pick">
         <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
         <button class="btn small ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
-      </div>` : askRegions === current && n > 1 && !v ? `
+      </div>` : askRegions === current && n > 1 && !v && !site ? `
       <div class="pick ask">
         <div class="name"><b>Quel${fem ? "les" : "s"} ${esc(f.kind)} ?</b><small>Touche sur la carte ${fem ? "celles" : "ceux"} où tu es allé.</small></div>
         <button class="btn small" id="s-later">Plus tard</button>
@@ -546,6 +594,7 @@ function renderSheet() {
       ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
+      ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
@@ -560,6 +609,7 @@ function renderSheet() {
     $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
     if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
+    if (site) $("s-site").onclick = () => { toggleSite(site.id); update(); };
     if (sel) $("s-mark").onclick = () => {
       const month = $("s-date") && $("s-date").value;
       toggleRegion(sel.id);
@@ -637,6 +687,18 @@ function renderProgress() {
       <div class="tile"><b>${s.regions}</b><span>régions</span></div>
       <div class="tile"><b>${s.continents}</b><span>continents sur 6</span></div>
     </div>
+    ${sites.length ? (() => {
+      const seen = sites.filter(st => state.u.has(st.id));
+      const byCat = ["c", "n", "m"].map(c => [c, seen.filter(st => st.cat === c).length, sites.filter(st => st.cat === c).length]);
+      return `
+    <div class="block">
+      <h3>Patrimoine mondial UNESCO</h3>
+      <div class="row between" style="margin-bottom:6px"><span><b class="num">${seen.length}</b> sites visités</span><span class="num muted">sur ${sites.length}</span></div>
+      <div class="bar"><i style="width:${Math.max(seen.length ? 1 : 0, seen.length / sites.length * 100)}%"></i></div>
+      <div class="tiles" style="margin-top:12px">${byCat.map(([c, v, t]) => `<div class="tile"><b>${v}</b><span>${CAT[c]}${v > 1 ? "s" : ""} sur ${t}</span></div>`).join("")}</div>
+      ${seen.length ? `<ul class="sites">${seen.slice(0, 12).map(st => `<li><button data-site="${st.id}">${flag(siteHome(st))} ${esc(st.n)}</button></li>`).join("")}</ul>`
+        : `<p class="small" style="margin:10px 0 0">Ouvre un pays sur la carte : ses sites du patrimoine mondial apparaissent en losanges ◆. Touche-en un pour le marquer.</p>`}
+    </div>`; })() : ""}
     <div class="block goal">
       <div class="medal">${next || "★"}</div>
       <p>${next ? `Prochain palier : <b>${next} pays</b>. Encore ${next - s.n} pays à découvrir.` : "Tu as visité tous les pays du monde. Chapeau !"}</p>
@@ -661,12 +723,16 @@ function renderProgress() {
       <h3>Pays les plus complets</h3>
       <div class="rows">${top.map(({ f, v }) => `
         <button class="r" data-open="${f.id}">
-          <div class="row between"><span>${esc(f.properties.n)}</span><span class="num">${v} / ${f.nreg} ${esc(f.kind)}</span></div>
+          <div class="row between"><span>${flag(f.id)} ${esc(f.properties.n)}</span><span class="num">${v} / ${f.nreg} ${esc(f.kind)}</span></div>
           <div class="bar"><i style="width:${v / f.nreg * 100}%"></i></div>
         </button>`).join("")}
       </div>
     </div>` : ""}`;
   $("progress").querySelectorAll("[data-open]").forEach(b => b.onclick = () => { showTab("map"); openCountry(b.dataset.open); });
+  $("progress").querySelectorAll("[data-site]").forEach(b => b.onclick = () => {
+    const st = siteById.get(b.dataset.site);
+    showTab("map"); openCountry(siteHome(st)); selSite = st.id; update();
+  });
   $("btn-share").onclick = shareImage;
 }
 
@@ -728,7 +794,7 @@ function tripItem(f) {
   return `
     <div class="trip ${open ? "open" : ""}" data-trip="${f.id}">
       <button aria-expanded="${open}">
-        <span><b>${esc(f.properties.n)}</b></span>
+        <span><b>${flag(f.id)} ${esc(f.properties.n)}</b></span>
         <span class="num muted">${v} / ${n} ${esc(f.kind)} <span class="chev">›</span></span>
         <span class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></span>
       </button>
@@ -956,7 +1022,7 @@ function renderEditor(box) {
 }
 
 /* ---------- Recherches ---------- */
-function searchHits(s, withRegions) {
+function searchHits(s, withRegions, withSites = false) {
   const hits = [];
   for (const f of countries) if (norm(f.properties.n).includes(s)) hits.push({ n: f.properties.n, k: "pays", c: f.id });
   hits.sort((a, b) => norm(a.n).indexOf(s) - norm(b.n).indexOf(s));
@@ -973,26 +1039,33 @@ function searchHits(s, withRegions) {
       if (r) hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
     }
   }
+  if (withSites && s.length >= 4) for (const st of sites) {
+    if (hits.length >= 12) break;
+    if (st.key.includes(s)) hits.push({ n: st.n, k: "Patrimoine mondial · " + (byId.get(siteHome(st))?.properties.n || ""), c: siteHome(st), site: st.id });
+  }
   return hits.slice(0, 12);
 }
-function bindSearch(input, list, withRegions, label, pick) {
+function bindSearch(input, list, withRegions, label, pick, withSites = false) {
   const regions = typeof withRegions === "function" ? withRegions : () => withRegions;
   input.addEventListener("input", () => {
     const s = norm(input.value.trim());
     if (!s) { list.hidden = true; return; }
-    const hits = searchHits(s, regions());
-    list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
+    const hits = searchHits(s, regions(), withSites);
+    list.innerHTML = hits.map(h => `<li><button data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}" data-site="${h.site || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
       || `<li class="empty">Aucun résultat</li>`;
     list.hidden = false;
     list.querySelectorAll("button").forEach(b => b.onclick = () => {
       input.value = ""; list.hidden = true; input.blur();
-      pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city);
+      pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city, b.dataset.site || null);
     });
   });
   input.addEventListener("keydown", e => { if (e.key === "Escape") { input.value = ""; list.hidden = true; } });
   input.addEventListener("blur", () => setTimeout(() => list.hidden = true, 200));
 }
-bindSearch($("q"), $("results"), true, h => h.k, (c, r, city) => openCountry(c, r, city));
+bindSearch($("q"), $("results"), true, h => h.k, (c, r, city, site) => {
+  openCountry(c, r, city);
+  if (site) { selSite = site; const st = siteById.get(site); update(); fitBounds([projection([st.lon - .6, st.lat + .4]), projection([st.lon + .6, st.lat - .4])]); }
+}, true);
 bindSearch($("add-q"), $("add-results"), () => tripView === "wish",
   h => tripView === "wish" ? (state.w.has(h.r || h.c) ? "déjà en envie" : h.k) : (state.c.has(h.c) ? "déjà ajouté" : "ajouter"),
   (c, r) => {
@@ -1067,6 +1140,7 @@ $("import-file").onchange = async e => {
     for (const [id, t] of toMap(d.c)) if (byId.has(id) && !state.c.has(id)) { state.c.set(id, t); added++; }
     for (const [id, t] of toMap(d.r)) if (regionById.has(id) && !state.r.has(id)) state.r.set(id, t);
     for (const [id, t] of toMap(d.w)) if (place(id) && !state.w.has(id)) state.w.set(id, t);
+    for (const [id, t] of toMap(d.u)) if (siteById.has(id) && !state.u.has(id)) state.u.set(id, t);
     for (const p of cleanPlans(d.plans)) if (!state.plans.some(x => x.id === p.id)) state.plans.push(p);
     save(); update();
     toast(`Sauvegarde importée : ${added} nouveau${added > 1 ? "x" : ""} pays`);
@@ -1075,7 +1149,7 @@ $("import-file").onchange = async e => {
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
   if (b.dataset.armed) {
-    state = { c: new Map(), r: new Map(), w: new Map(), plans: [] }; save();
+    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [] }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
     update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;
