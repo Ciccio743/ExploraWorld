@@ -1525,24 +1525,33 @@ function drawTripMap(p) {
   const padT = (document.querySelector(".tf-top")?.offsetHeight || 80) + 16, padB = Math.min(H * .6, (document.querySelector(".tf-panel")?.offsetHeight || 0) + 24);
   const ids = p.stops.map((id, i) => i).filter(i => place(p.stops[i]));
   const pts = ids.map(i => centroid(p.stops[i]));
-  let proj, cam = tripCam && tripCam.id === p.id ? tripCam : null;
-  if (cam) proj = d3.geoMercator().scale(cam.scale).center(cam.center).translate(cam.mid);
-  else {
-    const fit = pts.length > 1 ? pts : pts.length ? [pts[0], pts[0]] : [[-150, -50], [170, 72]];
-    proj = d3.geoMercator().fitExtent([[50, padT], [W - 50, H - padB]], { type: "MultiPoint", coordinates: fit });
-    const mid = [W / 2, (padT + H - padB) / 2];
-    // une seule étape ou des villes très proches : on garde un peu de recul
-    if (pts.length && (pts.length < 2 || proj.scale() > 6000)) proj.scale(pts.length < 2 ? 2500 : 6000).center(d3.geoCentroid({ type: "MultiPoint", coordinates: pts })).translate(mid);
-    else proj.center(proj.invert(mid)).translate(mid);
-    cam = tripCam = { id: p.id, scale: proj.scale(), center: proj.center(), mid: proj.translate(), t: d3.zoomIdentity };
-  }
+  // même carte que l'onglet Carte : même projection, même cadrage de départ
+  const proj = d3.geoNaturalEarth1().fitExtent([[10, 10], [W - 10, H - 10]], { type: "Sphere" });
   const path = d3.geoPath(proj);
+  const fitT = ([[x0, y0], [x1, y1]], maxK) => {
+    const kk = Math.max(1, Math.min(maxK, .85 / Math.max((x1 - x0) / W, (y1 - y0) / (H - padT - padB), 1e-6)));
+    return d3.zoomIdentity.translate(W / 2 - kk * (x0 + x1) / 2, (padT + H - padB) / 2 - kk * (y0 + y1) / 2).scale(kk);
+  };
+  let cam = tripCam && tripCam.id === p.id ? tripCam : null;
+  if (!cam) {
+    let t;
+    if (pts.length) {
+      const P0 = pts.map(d => proj(d));
+      t = fitT([[d3.min(P0, d => d[0]), d3.min(P0, d => d[1])], [d3.max(P0, d => d[0]), d3.max(P0, d => d[1])]], pts.length < 2 ? 25 : 150);
+    } else {
+      const b = path.bounds({ type: "FeatureCollection", features: countries });
+      const kk = Math.max(1, Math.min(1.9, (H - padT - padB) / (b[1][1] - b[0][1])));
+      t = d3.zoomIdentity.translate(W / 2, (padT + H - padB) / 2).scale(kk).translate(-proj([2, 0])[0], -(b[0][1] + b[1][1]) / 2);
+    }
+    cam = tripCam = { id: p.id, t };
+  }
   const svgT = d3.select(el);
   svgT.selectAll("*").remove();
   const g = svgT.append("g");
-  const near = f => { const [[x0, y0], [x1, y1]] = path.bounds(f); return x1 > -2 * W && x0 < 3 * W && y1 > -2 * H && y0 < 3 * H; };
-  g.selectAll(".tm-land").data(countries.filter(near)).join("path")
-    .attr("class", d => "tm-land" + (state.c.has(d.id) ? " been" : "")).attr("d", path);
+  g.selectAll(".ocean-name").data(OCEANS).join("text").attr("class", "ocean-name").attr("text-anchor", "middle")
+    .call(t => { t.append("tspan").attr("x", 0).attr("dy", "-.2em").text("Océan"); t.append("tspan").attr("x", 0).attr("dy", "1.25em").text(d => d[0]); });
+  g.selectAll(".tm-land").data(countries).join("path")
+    .attr("class", d => "country tm-land" + (state.c.has(d.id) ? " visited" : state.w.has(d.id) ? " wish" : "")).attr("d", path);
   // régions des étapes en couleur du trip, plus légères celles traversées par la route
   const legs = ids.slice(1).map(i => legInfo(p, i));
   const onIds = new Set(ids.map(i => placeRegion(p.stops[i])));
@@ -1580,24 +1589,28 @@ function drawTripMap(p) {
     return { x: .25 * a[0] + .5 * c[0] + .25 * b[0], y: .25 * a[1] + .5 * c[1] + .25 * b[1], r: Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI };
   })).join("text").attr("class", "tm-plane").text("✈");
   // villes à toucher pour les ajouter : les plus grandes de la zone visible, assez espacées
+  // villes à toucher pour les ajouter : comme sur l'onglet Carte, les plus grandes de loin, les petites en zoomant
   const gC = g.append("g");
-  const cityXY = cities.map(c => proj([c.lon, c.lat]));
   const drawCities = t => {
-    const x0 = -t.x / t.k, y0 = -t.y / t.k, x1 = (W - t.x) / t.k, y1 = (H - t.y) / t.k, gap = 46 / t.k;
+    const minPop = Math.max(10, 8000 / Math.pow(t.k, 1.3));
+    const boxes = P.map(q => { const x = t.applyX(q[0]), y = t.applyY(q[1]); return [x - 16, y - 16, x + 140, y + 16]; });
     const picked = [];
-    for (let i = 0; i < cities.length && picked.length < 28; i++) {
-      const [x, y] = cityXY[i];
-      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
-      // pas de ville sous une étape ni sous son nom
-      if (P.some(q => x - q[0] > -gap * 2.2 && x - q[0] < gap * 2.6 && Math.abs(q[1] - y) < gap * .55)) continue;
-      if (picked.some(o => Math.abs(o.x - x) < gap * 1.6 && Math.abs(o.y - y) < gap * .5)) continue;
-      picked.push({ x, y, c: cities[i] });
+    for (const c of cities) {
+      if (c.pop < minPop) break;
+      if (tripFocus && c.code !== tripFocus) continue;
+      const q = proj([c.lon, c.lat]), x = t.applyX(q[0]), y = t.applyY(q[1]);
+      if (x < 0 || y < padT || x > W || y > H - padB + 20) continue;
+      const b = [x - 24, y - 18, x + c.n.length * 5.6 + 28, y + 18];
+      if (boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) continue;
+      boxes.push(b);
+      picked.push({ x: q[0], y: q[1], c });
+      if (picked.length >= 20) break;
     }
-    gC.selectAll(".tm-city").data(picked, d => d.c.n + d.x).join(enter => {
-      const m = enter.append("g").attr("class", "tm-city");
+    gC.selectAll(".tm-city").data(picked, d => d.c.n + d.c.lon).join(enter => {
+      const m = enter.append("g").attr("class", "city tm-city");
       m.append("circle").attr("class", "hit").attr("r", 16);
-      m.append("circle").attr("class", "dot").attr("r", 4);
-      m.append("text").attr("x", 7).attr("dy", "0.35em").text(d => d.c.n);
+      m.append("circle").attr("class", "dot").attr("r", 2.2);
+      m.append("text").attr("x", 5).attr("dy", "0.35em").text(d => d.c.n);
       m.on("click", (e, d) => {
         e.stopPropagation();
         const r = regionIn(d.c.code, d.c.lon, d.c.lat);
@@ -1624,6 +1637,7 @@ function drawTripMap(p) {
   marks.select(".num").text(d => d.n);
   marks.select(".lbl").text(d => d.name.length > 18 ? d.name.slice(0, 17) + "…" : d.name);
   const place2 = kk => {
+    g.selectAll(".ocean-name").attr("transform", d => { const [x, y] = proj([d[1], d[2]]); return `translate(${x},${y}) scale(${1 / kk})`; }).style("opacity", kk > 5 ? 0 : null);
     marks.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
     planes.attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk}) rotate(${d.r})`);
     gC.selectAll(".tm-city").attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / kk})`);
@@ -1642,9 +1656,7 @@ function drawTripMap(p) {
   svgT.on("click", () => { if (tripFocus) { tripFocus = null; drawTripMap(p); } });
   if (tripFocusGo && tripFocus && byId.get(tripFocus)) {
     tripFocusGo = false;
-    const [[x0, y0], [x1, y1]] = path.bounds(mainParts(byId.get(tripFocus)));
-    const kk = Math.min(600, .85 / Math.max((x1 - x0) / W, (y1 - y0) / (H - padT - padB)));
-    const t = d3.zoomIdentity.translate(W / 2 - kk * (x0 + x1) / 2, (padT + H - padB) / 2 - kk * (y0 + y1) / 2).scale(kk);
+    const t = fitT(path.bounds(mainParts(byId.get(tripFocus))), 600);
     svgT.transition().duration(reduceMotion() ? 0 : 650).call(zoomT.transform, t);
   }
 }
