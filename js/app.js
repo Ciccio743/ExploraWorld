@@ -508,7 +508,7 @@ function renderSheet() {
       <div class="row cmp">
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
         <div class="cname grow"><b>${esc(f.properties.n)}</b><small>${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
-        <button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "J'y suis allé"}</button>
+        ${n > 1 ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
@@ -520,16 +520,23 @@ function renderSheet() {
       </div>` : ""}
       ${sheetMore ? `
       <label class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
+      ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
-    $("s-been").onclick = () => { setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0); update(); };
+    if ($("s-been")) $("s-been").onclick = () => { setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0); update(); };
+    if ($("s-unbeen")) $("s-unbeen").onclick = () => { if (confirm(`Retirer ${f.properties.n} et toutes ses régions de ta carte ?`)) { setCountry(current, false); update(); } };
     $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
     if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
-    if (sel) $("s-mark").onclick = () => { toggleRegion(sel.id); update(); };
+    if (sel) $("s-mark").onclick = () => {
+      const month = $("s-date") && $("s-date").value;
+      toggleRegion(sel.id);
+      if (!been && month && state.c.has(current)) setVisitMonth(current, month);
+      update();
+    };
     if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
     if ($("s-quick")) $("s-quick").onchange = e => { quick = e.target.checked; store.set("explora-quick", quick ? "1" : "0"); renderSheet(); };
   } else if (plan) {

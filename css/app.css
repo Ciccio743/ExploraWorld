@@ -129,7 +129,7 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .cmp { gap: 8px; align-items: center; }
 .back-ic { all: unset; cursor: pointer; width: 32px; height: 32px; margin-left: -6px; display: grid; place-items: center; border-radius: 50%; font-size: 18px; color: var(--ink-2); flex: none; }
 .back-ic:active { background: var(--line); }
-.cname { min-width: 0; }
+.cname { min-width: 0; flex: 1 1 auto; }
 .cname b { display: block; font-family: var(--f-display); font-weight: 800; font-size: 19px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cname small { color: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .btn.more { width: 16px; font-size: 16px; line-height: 1; }
