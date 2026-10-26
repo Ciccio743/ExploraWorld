@@ -45,6 +45,7 @@ let state = { c: new Map(), r: new Map(), w: new Map(), plans: [] };
 let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
+let sheetMore = false; // panneau du pays déplié
 let me = null, watchId = null;
 
 /* ---------- Sauvegarde locale ---------- */
@@ -366,6 +367,7 @@ function homeTransform() {
 const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
 
 function openCountry(code, regionId = null, focus = false) {
+  if (code !== current) sheetMore = false;
   current = code;
   selected = regionId;
   routePlan = null;
@@ -501,33 +503,35 @@ function renderSheet() {
     const selOn = sel && state.r.has(sel.id), selWish = sel && state.w.has(sel.id);
     const one = SINGULAR[f.kind] || "endroit", fem = FEMININE.has(f.kind);
     const un = (fem ? "une " : "un ") + one, le = fem ? "la" : "le";
+    // panneau compact par défaut pour laisser la carte visible ; « ⌃ » déplie la date, les envies et le marquage rapide
     sheet.innerHTML = `
-      <button class="back" id="s-back">← Monde</button>
-      <div class="row">
-        <h2 class="grow">${esc(f.properties.n)}</h2>
-        <button class="btn ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "J'y suis allé"}</button>
+      <div class="row cmp">
+        <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
+        <div class="cname grow"><b>${esc(f.properties.n)}</b><small>${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
+        <button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "J'y suis allé"}</button>
+        <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
-      <div class="prog">
-        <div class="row between"><span>${esc(cap(f.kind))} visit${fem ? "ées" : "és"}</span><span class="num">${v} / ${n}</span></div>
-        <div class="bar"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
-      </div>
-      <label class="when" style="margin-top:10px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
-      ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
+      <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       ${sel ? `
       <div class="pick">
         <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
-        <button class="btn ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
-      </div>` : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
-      <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>`;
+        <button class="btn small ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
+      </div>` : ""}
+      ${sheetMore ? `
+      <label class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) <input type="month" id="s-date" value="${been ? monthValue(state.c.get(current)) : ""}" max="${monthValue(Date.now())}"></label>
+      ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
+      ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
+      <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
-    $("s-been").onclick = () => { setCountry(current, !been, monthTs($("s-date").value)); update(); };
-    $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
+    $("s-been").onclick = () => { setCountry(current, !been, $("s-date") ? monthTs($("s-date").value) : 0); update(); };
+    $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
+    if ($("s-date")) $("s-date").onchange = e => { if (been) setVisitMonth(current, e.target.value); };
     if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
     if (sel) $("s-mark").onclick = () => { toggleRegion(sel.id); update(); };
     if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
-    $("s-quick").onchange = e => { quick = e.target.checked; store.set("explora-quick", quick ? "1" : "0"); renderSheet(); };
+    if ($("s-quick")) $("s-quick").onchange = e => { quick = e.target.checked; store.set("explora-quick", quick ? "1" : "0"); renderSheet(); };
   } else if (plan) {
     sheet.innerHTML = `
       <div class="row"><h2 class="grow">${esc(plan.name)}</h2><button class="btn small" id="s-close">Fermer</button></div>
