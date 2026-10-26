@@ -1129,37 +1129,49 @@ btnLoc.onclick = () => {
 // Rien n'est coché automatiquement : une carte propose de marquer la région si elle n'est pas encore visitée.
 // On ne demande la permission qu'une fois ; si elle est refusée, on ne redemande pas.
 const autoOn = () => store.get("explora-autoloc") !== "0";
-let lastAuto = 0;
+// Tant que l'appli est à l'écran, la position est suivie : en entrant dans une nouvelle région non visitée,
+// la proposition s'affiche. iOS suspend les applis web en arrière-plan, donc le suivi s'arrête quand on la quitte.
+let autoWatch = null, lastPt = null, lastRegion = null;
 async function autoLocate() {
-  if (!autoOn() || !navigator.geolocation || !regionById.size || Date.now() - lastAuto < 10 * 60e3) return;
+  if (!autoOn() || !navigator.geolocation || !regionById.size || autoWatch !== null || document.visibilityState !== "visible") return;
   try { if ((await navigator.permissions?.query({ name: "geolocation" }))?.state === "denied") return; } catch (e) {}
-  lastAuto = Date.now();
-  navigator.geolocation.getCurrentPosition(p => {
+  autoWatch = navigator.geolocation.watchPosition(p => {
     const { longitude: lon, latitude: lat } = p.coords;
+    if (lastPt && d3.geoDistance(lastPt, [lon, lat]) * 6371 < .3) return; // moins de 300 m : rien à refaire
+    lastPt = [lon, lat];
     const r = regionAt(lon, lat);
-    if (!r || state.r.has(r.id)) return;
-    let skip = {};
-    try { skip = JSON.parse(store.get("explora-skip") || "{}"); } catch (e) {}
-    if (skip[r.id] && Date.now() - skip[r.id] < 3 * 864e5) return; // « Pas maintenant » : on attend 3 jours
-    const city = cities.filter(c => c.code === r.code && Math.abs(c.lat - lat) < .3 && Math.abs(c.lon - lon) < .4)
-      .sort((a, b) => d3.geoDistance([lon, lat], [a.lon, a.lat]) - d3.geoDistance([lon, lat], [b.lon, b.lat]))[0];
-    const f = byId.get(r.code), fem = FEMININE.has(f.kind);
-    const box = $("here");
-    box.innerHTML = `<p><small>Tu es ici</small><b>${city && norm(city.n) !== norm(r.properties.n) ? esc(city.n) + " · " : ""}${esc(r.properties.n)}</b><small>${esc(f.properties.n)}</small></p>
-      <div class="row"><button class="btn small" id="here-no">Pas maintenant</button><button class="btn small primary" id="here-yes">Marquer ${fem ? "visitée" : "visité"}</button></div>`;
-    box.hidden = false;
-    $("here-yes").onclick = () => {
-      box.hidden = true;
-      setRegion(r.id, true, monthTs(monthValue(Date.now())));
-      showTab("map"); openCountry(r.code, r.id);
-      toast(r.properties.n + " ajouté à ta carte ✓", 1800);
-    };
-    $("here-no").onclick = () => { box.hidden = true; skip[r.id] = Date.now(); store.set("explora-skip", JSON.stringify(skip)); };
-  }, () => {}, { enableHighAccuracy: false, maximumAge: 5 * 60e3, timeout: 15000 });
+    if (!r || r.id === lastRegion) return;
+    lastRegion = r.id;
+    proposeHere(r, lon, lat);
+  }, err => { if (err.code === 1) stopAutoLocate(); }, { enableHighAccuracy: false, maximumAge: 60e3, timeout: 30000 });
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") autoLocate(); });
+function stopAutoLocate() {
+  if (autoWatch !== null) navigator.geolocation.clearWatch(autoWatch);
+  autoWatch = null;
+}
+function proposeHere(r, lon, lat) {
+  if (state.r.has(r.id)) return;
+  let skip = {};
+  try { skip = JSON.parse(store.get("explora-skip") || "{}"); } catch (e) {}
+  if (skip[r.id] && Date.now() - skip[r.id] < 3 * 864e5) return; // « Pas maintenant » : on attend 3 jours
+  const city = cities.filter(c => c.code === r.code && Math.abs(c.lat - lat) < .3 && Math.abs(c.lon - lon) < .4)
+    .sort((a, b) => d3.geoDistance([lon, lat], [a.lon, a.lat]) - d3.geoDistance([lon, lat], [b.lon, b.lat]))[0];
+  const f = byId.get(r.code), fem = FEMININE.has(f.kind);
+  const box = $("here");
+  box.innerHTML = `<p><small>Tu es ici</small><b>${city && norm(city.n) !== norm(r.properties.n) ? esc(city.n) + " · " : ""}${esc(r.properties.n)}</b><small>${esc(f.properties.n)}</small></p>
+    <div class="row"><button class="btn small" id="here-no">Pas maintenant</button><button class="btn small primary" id="here-yes">Marquer ${fem ? "visitée" : "visité"}</button></div>`;
+  box.hidden = false;
+  $("here-yes").onclick = () => {
+    box.hidden = true;
+    setRegion(r.id, true, monthTs(monthValue(Date.now())));
+    showTab("map"); openCountry(r.code, r.id);
+    toast(r.properties.n + " ajouté à ta carte ✓", 1800);
+  };
+  $("here-no").onclick = () => { box.hidden = true; skip[r.id] = Date.now(); store.set("explora-skip", JSON.stringify(skip)); };
+}
+document.addEventListener("visibilitychange", () => { document.visibilityState === "visible" ? autoLocate() : stopAutoLocate(); });
 $("set-autoloc").checked = autoOn();
-$("set-autoloc").onchange = e => { store.set("explora-autoloc", e.target.checked ? "1" : "0"); if (e.target.checked) { lastAuto = 0; autoLocate(); } };
+$("set-autoloc").onchange = e => { store.set("explora-autoloc", e.target.checked ? "1" : "0"); if (e.target.checked) { lastRegion = null; lastPt = null; autoLocate(); } else stopAutoLocate(); };
 
 addEventListener("resize", () => {
   if (!countries.length || tab !== "map" || !resize()) return;
