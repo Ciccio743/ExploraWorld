@@ -1503,7 +1503,7 @@ function fitPins(list) {
   const P = list.map(p => projection([p.lon, p.lat]));
   const m = 2.5; // marge, et zoom assez près pour voir les photos
   const cx = (d3.min(P, d => d[0]) + d3.max(P, d => d[0])) / 2, cy = (d3.min(P, d => d[1]) + d3.max(P, d => d[1])) / 2;
-  const hw = Math.max((d3.max(P, d => d[0]) - d3.min(P, d => d[0])) / 2 + m, W * .9 / (2 * (PIN_MIN_K + 2))), hh = (d3.max(P, d => d[1]) - d3.min(P, d => d[1])) / 2 + m;
+  const hw = Math.max((d3.max(P, d => d[0]) - d3.min(P, d => d[0])) / 2 + m, W * .9 / 12), hh = (d3.max(P, d => d[1]) - d3.min(P, d => d[1])) / 2 + m;
   fitBounds([[cx - hw, cy - hh], [cx + hw, cy + hh]], 700);
 }
 // en capture : poser les photos en attente avant les autres actions de la carte
@@ -1517,34 +1517,69 @@ svg.node().addEventListener("click", e => {
     const n = placing.length;
     placing = null; document.querySelector(".place-bar")?.remove();
     save(); drawPins();
-    toast(`${plural(n, "photo ajoutée", "photos ajoutées")} ✓${k < PIN_MIN_K ? " Zoome pour les voir" : ""}`, 1800);
+    toast(`${plural(n, "photo ajoutée", "photos ajoutées")} ✓`, 1800);
     return;
   }
 }, true);
-// photos visibles seulement de près, en petites vignettes ; une pile s'ouvre en galerie
-const PIN_MIN_K = 4;
+// photos : petites vignettes partout ; dans le pays ouvert, chaque pile s'ouvre en toile d'araignée
+const pinHome = new Map();
+const pinIn = p => { const key = p.id + "@" + p.lon + "," + p.lat; if (!pinHome.has(key)) pinHome.set(key, countryAt(p.lon, p.lat)?.id || ""); return pinHome.get(key); };
+const WEB_MAX = 8;
 function drawPins() {
-  const list = pinsShown() && !VIEW && k >= PIN_MIN_K ? state.p : [];
-  const r = 40 / k, groups = [];
+  const list = pinsShown() && !VIEW ? state.p : [], groups = [];
   for (const p of list) {
+    const open = !!current && pinIn(p) === current, r = (open ? 34 : 22) / k;
     const [x, y] = projection([p.lon, p.lat]);
-    const g = groups.find(o => Math.abs(o.x - x) < r && Math.abs(o.y - y) < r);
-    if (g) g.items.push(p); else groups.push({ x, y, items: [p] });
+    const g = groups.find(o => o.open === open && Math.abs(o.x - x) < r && Math.abs(o.y - y) < r);
+    if (g) g.items.push(p); else groups.push({ x, y, open, items: [p] });
   }
-  for (const g of groups) { g.id = g.items[0].id; g.items.sort((a, b) => (b.d || "").localeCompare(a.d || "")); g.n = g.items.length; }
-  if (!svg.select("#pin-clip").size()) svg.append("defs").append("clipPath").attr("id", "pin-clip")
-    .append("rect").attr("x", -17).attr("y", -17).attr("width", 34).attr("height", 34).attr("rx", 8);
-  gPins.selectAll(".pin-g").data(groups, d => d.id + ":" + d.n).join(enter => {
-    const m = enter.append("g").attr("class", "pin-g");
-    m.append("rect").attr("class", "pv-frame").attr("x", -19).attr("y", -19).attr("width", 38).attr("height", 38).attr("rx", 10);
-    m.append("image").attr("x", -17).attr("y", -17).attr("width", 34).attr("height", 34).attr("preserveAspectRatio", "xMidYMid slice").attr("clip-path", "url(#pin-clip)")
-      .each(function (d) { photoURL(d.items[0].ph).then(u => { if (u) this.setAttribute("href", u); }); });
-    const badge = m.filter(d => d.n > 1).append("g").attr("class", "pv-count").attr("transform", "translate(15,15)");
-    badge.append("rect").attr("x", -10).attr("y", -8).attr("width", 20).attr("height", 16).attr("rx", 8);
-    badge.append("text").attr("dy", "0.35em").text(d => d.n);
+  for (const g of groups) { g.items.sort((a, b) => (b.d || "").localeCompare(a.d || "")); g.n = g.items.length; g.id = g.items[0].id + ":" + g.n + (g.open ? ":o" : ""); }
+  if (!svg.select("#pin-clip").size()) {
+    const defs = svg.append("defs");
+    defs.append("clipPath").attr("id", "pin-clip").append("rect").attr("x", -17).attr("y", -17).attr("width", 34).attr("height", 34).attr("rx", 8);
+    defs.append("clipPath").attr("id", "pin-clip-s").append("rect").attr("x", -9).attr("y", -9).attr("width", 18).attr("height", 18).attr("rx", 5);
+  }
+  const thumb = (sel, big, ph) => {
+    const h = big ? 17 : 9;
+    sel.append("rect").attr("class", "pv-frame").attr("x", -h - 2).attr("y", -h - 2).attr("width", 2 * h + 4).attr("height", 2 * h + 4).attr("rx", big ? 10 : 6);
+    sel.append("image").attr("x", -h).attr("y", -h).attr("width", 2 * h).attr("height", 2 * h).attr("preserveAspectRatio", "xMidYMid slice").attr("clip-path", `url(#pin-clip${big ? "" : "-s"})`)
+      .each(function () { photoURL(ph).then(u => { if (u) this.setAttribute("href", u); }); });
+  };
+  const badge = (sel, n, x, y, small) => {
+    const b = sel.append("g").attr("class", "pv-count").attr("transform", `translate(${x},${y})${small ? " scale(.8)" : ""}`);
+    const t = String(n), w = 10 + 6 * t.length;
+    b.append("rect").attr("x", -w / 2).attr("y", -8).attr("width", w).attr("height", 16).attr("rx", 8);
+    b.append("text").attr("dy", "0.35em").text(t);
+  };
+  const motion = !reduceMotion();
+  gPins.selectAll(".pin-g").data(groups, d => d.id).join(enter => {
+    const m = enter.append("g").attr("class", d => "pin-g" + (d.open ? " web" : " mini"));
+    m.each(function (d) {
+      const el = d3.select(this);
+      if (!d.open) {
+        thumb(el, false, d.items[0].ph);
+        if (d.n > 1) badge(el, d.n, 10, 10, true);
+        el.on("click", e => { e.stopPropagation(); const c = pinIn(d.items[0]); c ? openCountry(c) : pinViewer(d.items); });
+        return;
+      }
+      if (d.n === 1) { thumb(el, true, d.items[0].ph); el.on("click", e => { e.stopPropagation(); pinViewer(d.items); }); return; }
+      // toile d'araignée : les photos s'écartent autour du point où elles ont été prises
+      const shown = d.items.slice(0, WEB_MAX), R = shown.length <= 3 ? 36 : shown.length <= 5 ? 44 : 54;
+      const pos = shown.map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / shown.length; return [R * Math.cos(a), R * Math.sin(a)]; });
+      const legs = el.append("g").attr("class", "pv-legs");
+      pos.forEach(([x, y]) => legs.append("line").attr("x1", 0).attr("y1", 0).attr("x2", motion ? 0 : x).attr("y2", motion ? 0 : y)
+        .call(l => motion && l.transition().duration(380).ease(d3.easeBackOut).attr("x2", x).attr("y2", y)));
+      el.append("circle").attr("class", "pv-hub").attr("r", 4);
+      shown.forEach((p, i) => {
+        const c = el.append("g").attr("class", "pv-leg").attr("transform", motion ? "translate(0,0) scale(.3)" : `translate(${pos[i][0]},${pos[i][1]})`);
+        thumb(c, true, p.ph);
+        if (i === WEB_MAX - 1 && d.n > WEB_MAX) badge(c, "+" + (d.n - WEB_MAX + 1), 0, 0);
+        c.on("click", e => { e.stopPropagation(); pinViewer(d.items, i); });
+        if (motion) c.transition().delay(i * 25).duration(380).ease(d3.easeBackOut).attr("transform", `translate(${pos[i][0]},${pos[i][1]})`);
+      });
+    });
     return m;
-  }).attr("transform", pinTransform)
-    .on("click", (e, d) => { e.stopPropagation(); pinViewer(d.items); });
+  }).attr("transform", pinTransform);
 }
 function pinViewer(items, start = 0) {
   let list = [...items], i = start;
