@@ -534,6 +534,41 @@ function drawCities() {
 function regionIn(code, lon, lat) {
   return (regionsBy.get(code) || []).find(r => d3.geoContains(r, [lon, lat])) || null;
 }
+// village au bord de la côte simplifiée : la région la plus proche
+function regionNear(code, lon, lat) {
+  return regionIn(code, lon, lat) || d3.least(regionsBy.get(code) || [], r => d3.geoDistance(d3.geoCentroid(r), [lon, lat])) || null;
+}
+function countryAt(lon, lat) {
+  return countries.find(f => d3.geoContains(f, [lon, lat])) || null;
+}
+// Petites villes et villages (moins de 10 000 habitants) : seulement pour la recherche, chargés à la première recherche
+let towns = [], townsP = null;
+function ensureTowns() {
+  return townsP ||= fetch(dataUrl("towns.json")).then(r => r.json()).then(d => {
+    towns = d.towns.map(([n, lon, lat, ci]) => ({ n, lon, lat, pop: 0, code: d.countries[ci], key: norm(n), alt: "" }));
+  }).catch(() => { townsP = null; });
+}
+// Tout le reste (hameaux, lieux-dits…) : recherche en ligne dans OpenStreetMap (Photon), quand la liste locale est courte
+const PLACE_KINDS = new Set(["city", "town", "village", "hamlet", "suburb", "locality", "isolated_dwelling", "island", "islet", "neighbourhood", "quarter", "oasis"]);
+const onlineCache = new Map();
+async function onlinePlaces(q) {
+  if (onlineCache.has(q)) return onlineCache.get(q);
+  const url = "https://photon.komoot.io/api/?limit=10&lang=fr&osm_tag=place&q=" + encodeURIComponent(q);
+  const d = await fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!d) return [];
+  const out = [];
+  for (const f of d.features || []) {
+    const p = f.properties || {};
+    if (!PLACE_KINDS.has(p.osm_value) || !p.name) continue;
+    const [lon, lat] = f.geometry.coordinates;
+    const ctry = countryAt(lon, lat);
+    if (!ctry) continue;
+    out.push({ n: p.name, lon: +lon.toFixed(3), lat: +lat.toFixed(3), pop: 0, code: ctry.id, key: norm(p.name), alt: "" });
+  }
+  if (onlineCache.size > 200) onlineCache.clear();
+  onlineCache.set(q, out);
+  return out;
+}
 
 function drawMe() {
   const pts = me ? [projection([me.lon, me.lat])] : [];
@@ -1701,7 +1736,7 @@ function drawTripMap(p0) {
 }
 
 /* ---------- Recherches ---------- */
-function searchHits(s, withRegions, withSites = false) {
+function searchHits(s, withRegions, withSites = false, extra = []) {
   const hits = [];
   for (const f of countries) if (norm(f.properties.n).includes(s)) hits.push({ n: f.properties.n, k: "pays", c: f.id });
   hits.sort((a, b) => norm(a.n).indexOf(s) - norm(b.n).indexOf(s));
@@ -1710,12 +1745,17 @@ function searchHits(s, withRegions, withSites = false) {
     if (norm(r.properties.n).includes(s)) hits.push({ n: r.properties.n, k: byId.get(r.code)?.properties.n || "", c: r.code, r: r.id });
   }
   if (s.length >= 3 && hits.length < 12) {
-    for (const c of cities) {
+    const match = k => k && (k.startsWith(s) || (s.length >= 4 && k.includes(s)));
+    const seen = new Set();
+    for (const list of [cities, towns, extra]) for (const c of list) {
       if (hits.length >= 12) break;
-      const match = k => k && (k.startsWith(s) || (s.length >= 4 && k.includes(s)));
       if (!match(c.key) && !match(c.alt)) continue; // nom français ou nom local
-      const r = regionIn(c.code, c.lon, c.lat);
-      if (r) hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
+      const dup = c.key + "|" + c.code;
+      if (list === extra && seen.has(dup)) continue; // déjà trouvé dans la liste locale
+      const r = regionNear(c.code, c.lon, c.lat);
+      if (!r) continue;
+      seen.add(dup);
+      hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
     }
   }
   if (withSites && s.length >= 4) for (const st of sites) {
@@ -1728,17 +1768,31 @@ function searchHits(s, withRegions, withSites = false) {
 }
 function bindSearch(input, list, withRegions, label, pick, withSites = false) {
   const regions = typeof withRegions === "function" ? withRegions : () => withRegions;
-  input.addEventListener("input", () => {
-    const s = norm(input.value.trim());
+  let timer = 0;
+  const show = (extra, waiting) => {
+    const raw = input.value.trim(), s = norm(raw);
     if (!s) { list.hidden = true; return; }
-    const hits = searchHits(s, regions(), withSites);
+    const hits = searchHits(s, regions(), withSites, extra);
+    // peu de résultats : on cherche aussi les villages et lieux-dits en ligne
+    if (!extra && s.length >= 3 && hits.length < 6) {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const more = await onlinePlaces(raw);
+        if (norm(input.value.trim()) === s) show(more);
+      }, 350);
+      waiting = true;
+    }
     list.innerHTML = hits.map((h, i) => `<li><button data-i="${i}" data-c="${h.c}" data-r="${h.r || ""}" data-city="${h.city ? "1" : ""}" data-site="${h.site || ""}"><span>${esc(h.n)}</span><span class="k">${esc(label(h))}</span></button></li>`).join("")
-      || `<li class="empty">Aucun résultat</li>`;
+      || `<li class="empty">${waiting ? "Recherche…" : "Aucun résultat"}</li>`;
     list.hidden = false;
     list.querySelectorAll("button").forEach(b => b.onclick = () => {
       input.value = ""; list.hidden = true; input.blur();
       pick(b.dataset.c, b.dataset.r || null, !!b.dataset.city, b.dataset.site || null, hits[+b.dataset.i]);
     });
+  };
+  input.addEventListener("input", () => {
+    show();
+    if (!towns.length) ensureTowns()?.then(() => { if (input.value.trim()) show(); });
   });
   input.addEventListener("keydown", e => { if (e.key === "Escape") { input.value = ""; list.hidden = true; } });
   input.addEventListener("blur", () => setTimeout(() => list.hidden = true, 200));
