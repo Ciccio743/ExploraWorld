@@ -16,11 +16,11 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <script>
   // appliqué avant l'affichage pour éviter un flash du mauvais thème
-  try { const t = localStorage.getItem("explora-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  try { const t = localStorage.getItem("explora-theme") || "light"; if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=52">
+<link rel="stylesheet" href="css/app.css?v=53">
 </head>
 <body>
 <div id="app">
@@ -141,6 +141,6 @@
 
 <script src="vendor/d3.min.js"></script>
 <script src="vendor/topojson-client.min.js"></script>
-<script src="js/app.js?v=52"></script>
+<script src="js/app.js?v=53"></script>
 </body>
 </html>
