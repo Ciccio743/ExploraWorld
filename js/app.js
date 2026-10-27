@@ -1323,7 +1323,10 @@ function journalSheet(code) {
   const draw = () => {
     const j = journalOf(code);
     const mine = j.entries.flatMap(e => e.ph);
-    const cover = j.cover && mine.includes(j.cover) ? j.cover : mine[0];
+    // les photos posées sur la carte dans ce pays font aussi partie du journal
+    const onMap = state.p.filter(p => pinIn(p) === code).sort((a, b) => (b.d || "").localeCompare(a.d || ""));
+    const allPh = [...new Set([...mine, ...onMap.map(p => p.ph)])];
+    const cover = j.cover && allPh.includes(j.cover) ? j.cover : allPh[0];
     const been = state.c.get(code), n = f.nreg, v = visitedIn(code);
     const list = [...j.entries].sort((a, b) => (b.d || "").localeCompare(a.d || ""));
     back.innerHTML = `<div class="card ss jr" role="dialog" aria-label="Journal : ${esc(name)}">
@@ -1336,8 +1339,9 @@ function journalSheet(code) {
           <span><b>${been !== undefined ? (been ? esc(monthLabel(monthValue(been))) || "Visité" : "Visité") : "Pas encore visité"}</b><small>${been !== undefined ? "visite" : "à découvrir"}</small></span>
           ${n > 1 ? `<span><b>${v} / ${n}</b><small>${esc(f.kind)}</small></span>` : ""}
           <span><b>${j.entries.length}</b><small>${j.entries.length > 1 ? "souvenirs" : "souvenir"}</small></span>
-          <span><b>${mine.length}</b><small>photo${mine.length > 1 ? "s" : ""}</small></span>
+          <span><b>${allPh.length}</b><small>photo${allPh.length > 1 ? "s" : ""}</small></span>
         </div>
+        ${onMap.length && !edit ? `<div class="jr-map"><small>📷 Mes photos dans ce pays</small><div class="jr-strip">${onMap.map((p, i) => `<button type="button" data-mapph="${i}"><img data-ph="${p.ph}" alt=""></button>`).join("")}</div></div>` : ""}
         ${edit ? editor(edit) : `<button class="btn primary jr-new" data-j="new">＋ Écrire un souvenir</button>`}
         ${!edit && !list.length ? `<p class="small jr-empty">Raconte ton voyage : un moment fort, une adresse, une rencontre… avec tes photos. Tout reste sur ton téléphone.</p>` : ""}
         <div class="jr-list">${edit ? "" : list.map(e => `
@@ -1350,6 +1354,7 @@ function journalSheet(code) {
       </div></div>`;
     fillPhotos(back);
     back.querySelector('[data-j="close"]').onclick = close;
+    back.querySelectorAll("[data-mapph]").forEach(b => b.onclick = () => pinViewer(onMap, +b.dataset.mapph));
     const nw = back.querySelector('[data-j="new"]');
     if (nw) nw.onclick = () => { edit = { id: "e" + Date.now().toString(36), d: isoDay(new Date()), t: "", x: "", e: "", ph: [], added: [], isNew: true }; draw(); };
     back.querySelectorAll('[data-j="edit"]').forEach(b => b.onclick = () => { const e = journalOf(code).entries.find(x => x.id === b.dataset.id); edit = { ...e, ph: [...e.ph], added: [] }; draw(); });
@@ -1603,7 +1608,7 @@ function pinViewer(items, start = 0) {
     back.querySelector('[data-pv="close"]').onclick = close;
     back.querySelector('[data-pv="move"]').onclick = () => {
       const pin = list[i];
-      close();
+      close(); document.querySelector(".ss-back")?.remove();
       state.p = state.p.filter(x => x.id !== pin.id); drawPins();
       placing = [pin]; showPlacing();
     };
