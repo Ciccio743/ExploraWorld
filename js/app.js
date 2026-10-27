@@ -1551,7 +1551,7 @@ function drawTripMap(p) {
   g.selectAll(".ocean-name").data(OCEANS).join("text").attr("class", "ocean-name").attr("text-anchor", "middle")
     .call(t => { t.append("tspan").attr("x", 0).attr("dy", "-.2em").text("Océan"); t.append("tspan").attr("x", 0).attr("dy", "1.25em").text(d => d[0]); });
   g.selectAll(".tm-land").data(countries).join("path")
-    .attr("class", d => "country tm-land" + (state.c.has(d.id) ? " visited" : state.w.has(d.id) ? " wish" : "")).attr("d", path);
+    .attr("class", "country tm-land").attr("d", path);
   // régions des étapes en couleur du trip, plus légères celles traversées par la route
   const legs = ids.slice(1).map(i => legInfo(p, i));
   const onIds = new Set(ids.map(i => placeRegion(p.stops[i])));
@@ -1622,7 +1622,7 @@ function drawTripMap(p) {
   const gS = g.append("g");
   const sitesT = (tripFocus ? sitesBy.get(tripFocus) || [] : []).map(st => { const [x, y] = proj([st.lon, st.lat]); return { x, y, st }; });
   gS.selectAll(".tm-site").data(sitesT).join(enter => {
-    const m = enter.append("g").attr("class", d => "tm-site site" + (d.st.wonder ? " wonder" : "") + (state.u.has(d.st.id) ? " visited" : ""));
+    const m = enter.append("g").attr("class", d => "tm-site site" + (d.st.wonder ? " wonder" : ""));
     m.append("circle").attr("class", "hit").attr("r", 14);
     m.append("path").attr("d", d => d.st.wonder ? STAR : "M0,-7L7,0L0,7L-7,0Z");
     return m;
