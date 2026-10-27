@@ -1524,12 +1524,17 @@ svg.node().addEventListener("click", e => {
 // photos : cachées quand la carte est dézoomée, petites vignettes de près, plus grandes dans le pays ouvert
 const pinHome = new Map();
 const pinIn = p => { const key = p.id + "@" + p.lon + "," + p.lat; if (!pinHome.has(key)) pinHome.set(key, countryAt(p.lon, p.lat)?.id || ""); return pinHome.get(key); };
-const PIN_MIN_K = 3;
+// largeur visible de la carte en degrés de longitude : les photos n'apparaissent qu'à l'échelle d'une région (≈ la Méditerranée)
+const PIN_MAX_SPAN = 28;
+function viewSpan() {
+  const t = d3.zoomTransform(svg.node()), a = projection.invert(t.invert([0, H / 2])), b = projection.invert(t.invert([W, H / 2]));
+  return a && b && isFinite(a[0]) && isFinite(b[0]) ? Math.abs(b[0] - a[0]) : 360;
+}
 function drawPins() {
-  const list = pinsShown() && !VIEW ? state.p : [], groups = [];
+  const list = pinsShown() && !VIEW ? state.p : [], groups = [], far = viewSpan() > PIN_MAX_SPAN;
   for (const p of list) {
     const open = !!current && pinIn(p) === current, r = (open ? 34 : 22) / k;
-    if (!open && k < PIN_MIN_K) continue;
+    if (!open && far) continue;
     const [x, y] = projection([p.lon, p.lat]);
     const g = groups.find(o => o.open === open && Math.abs(o.x - x) < r && Math.abs(o.y - y) < r);
     if (g) g.items.push(p); else groups.push({ x, y, open, items: [p] });
