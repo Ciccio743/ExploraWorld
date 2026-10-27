@@ -1629,8 +1629,9 @@ function stopSheet(p, i) {
           <button class="ss-check" data-sp-done="${k}" aria-pressed="${x.done}" aria-label="${x.done ? "Pas encore fait" : "Fait"}">${x.done ? "✓" : ""}</button>
           ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.n)}</a>` : `<span>${esc(x.n)}</span>`}
           <button class="icon-btn" data-sp-rm="${k}" aria-label="Retirer ${esc(x.n)}">✕</button></li>`).join("")}</ul>
-        <form class="ss-add" id="ss-add"><input id="ss-spot" placeholder="Ajouter un spot ou une activité…" maxlength="140" enterkeyhint="done"><button class="btn small" aria-label="Ajouter">＋</button></form>
         <div class="ss-sugg" id="ss-sugg" hidden></div>
+        <p class="ss-sub">Ajouter mon spot ou mon activité</p>
+        <form class="ss-add" id="ss-add"><input id="ss-spot" placeholder="Ex. : resto, rooftop, balade…" maxlength="140" enterkeyhint="done"><button class="btn small primary">Ajouter</button></form>
         ${p.nights[i] ? `<h4>Trouver un hébergement</h4>
         <div class="ss-stays">${stayLinks(p, i).map(([n, k, url]) => `<a class="ss-stay ${k}" href="${esc(url)}" target="_blank" rel="noopener"><b>${n}</b><span>${esc(placeName(id))}${d ? " · " + esc(stopDates(p, i)) : ""}</span><i>›</i></a>`).join("")}</div>` : ""}
         <div class="btns"><button class="btn danger" data-ss="rm">Retirer cette étape</button></div>
@@ -1666,40 +1667,77 @@ function stopSheet(p, i) {
   back.addEventListener("touchend", e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 110) close(); y0 = null; });
   draw();
 }
-// Idées autour de l'étape : sites UNESCO proches, puis les lieux qui ont un article Wikipédia avec photo
+// Idées autour de l'étape : les sites UNESCO proches, puis les lieux les plus connus alentour
+// (Wikidata, classés par nombre d'articles Wikipédia), et en dernier recours les articles géolocalisés proches
 const suggCache = new Map();
+// types Wikidata qui ne sont pas des choses à voir : villes, quartiers, gares, écoles, routes, entreprises…
+const NOT_SPOTS = "Q515 Q1549591 Q3957 Q532 Q5084 Q123705 Q2983893 Q15284 Q484170 Q747074 Q1637706 Q200250 Q5119 Q6256 Q3624078 Q55488 Q1248784 Q644371 Q3914 Q3918 Q9842 Q159334 Q16917 Q34442 Q79007 Q4830453 Q43229 Q476028 Q1093829 Q10864048 Q13220204 Q1907114 Q2221906 Q15640612 Q1195098 Q6881511 Q891723 Q7930989 Q50330360 Q17343829 Q928830 Q4022 Q2085381";
+async function wikidataSpots(lon, lat, km) {
+  const q = `SELECT ?item ?label ?labelEn ?desc ?img ?art ?links WHERE {
+  SERVICE wikibase:around { ?item wdt:P625 ?loc . bd:serviceParam wikibase:center "Point(${lon} ${lat})"^^geo:wktLiteral ; wikibase:radius "${km}" . }
+  ?item wikibase:sitelinks ?links . FILTER(?links >= 4)
+  FILTER NOT EXISTS { ?item wdt:P31 ?t . VALUES ?t { ${NOT_SPOTS.split(" ").map(x => "wd:" + x).join(" ")} } }
+  OPTIONAL { ?item wdt:P18 ?img }
+  OPTIONAL { ?art schema:about ?item ; schema:isPartOf <https://fr.wikipedia.org/> }
+  OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "fr") }
+  OPTIONAL { ?item rdfs:label ?labelEn . FILTER(LANG(?labelEn) = "en") }
+  OPTIONAL { ?item schema:description ?desc . FILTER(LANG(?desc) = "fr") }
+} ORDER BY DESC(?links) LIMIT 40`;
+  const d = await fetch("https://query.wikidata.org/sparql?" + new URLSearchParams({ format: "json", query: q })).then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!d) return null;
+  const out = [], seen = new Set();
+  for (const b of d.results?.bindings || []) {
+    const n = b.label?.value || b.labelEn?.value;
+    if (!n || seen.has(b.item.value)) continue;
+    seen.add(b.item.value);
+    const img = b.img ? b.img.value.replace(/^http:/, "https:") + "?width=400" : "";
+    out.push({ n, img, url: b.art?.value || b.item.value.replace(/^http:/, "https:"), kind: b.desc?.value || "" });
+  }
+  return out;
+}
+async function wikiNearby(lon, lat, home) {
+  const d = await fetch("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({ format: "json", origin: "*", action: "query",
+    generator: "geosearch", ggscoord: lat + "|" + lon, ggsradius: "10000", ggslimit: "50",
+    prop: "pageimages|description|info", piprop: "thumbnail", pithumbsize: "400", inprop: "url" })).then(r => r.json()).catch(() => null);
+  const skip = /\b(commune|ville|village|douar|localité|municipalité|quartier|arrondissement|gare|aéroport|autoroute|école|lycée|université|hôpital|club|entreprise|circonscription|province|région|département|canton)\b/i;
+  const out = [];
+  for (const pg of Object.values(d?.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0))) {
+    if (norm(pg.title) === home || skip.test(pg.description || "")) continue;
+    out.push({ n: pg.title, img: pg.thumbnail?.source || "", url: pg.fullurl, kind: pg.description || "" });
+  }
+  return out.sort((a, b) => !a.img - !b.img);
+}
 async function stopSuggestions(id) {
   if (suggCache.has(id)) return suggCache.get(id);
   const r = (async () => {
     const [lon, lat] = centroid(id), out = [];
-    for (const st of sites) if (d3.geoDistance([st.lon, st.lat], [lon, lat]) * 6371 < (isCity(id) || isSite(id) ? 40 : 150))
-      out.push({ n: st.n, img: "", url: st.wiki ? "https://fr.wikipedia.org/wiki/" + encodeURIComponent(st.wiki) : "", kind: st.wonder ? "7 merveilles" : "Patrimoine mondial", site: st });
-    if (isCountry(id)) return out;
-    const d = await fetch("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({ format: "json", origin: "*", action: "query",
-      generator: "geosearch", ggscoord: lat + "|" + lon, ggsradius: "10000", ggslimit: "40",
-      prop: "pageimages|description|info", piprop: "thumbnail", pithumbsize: "400", inprop: "url" })).then(r => r.json()).catch(() => null);
-    const skip = /commune|ville|village|douar|localité|municipalité|quartier|arrondissement|gare|aéroport|route|autoroute|rue|école|lycée|université|hôpital|club|stade|entreprise|circonscription|province|région|département|canton/i;
+    const near = isCity(id) || isSite(id);
     const home = norm(placeName(id));
-    for (const pg of Object.values(d?.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0))) {
-      if (!pg.thumbnail || norm(pg.title) === home || skip.test(pg.description || "")) continue;
-      if (out.some(o => norm(o.n) === norm(pg.title))) continue;
-      out.push({ n: pg.title, img: pg.thumbnail.source, url: pg.fullurl, kind: pg.description || "" });
-      if (out.length >= 14) break;
-    }
-    return out;
+    const add = x => { if (x.n && norm(x.n) !== home && !out.some(o => norm(o.n) === norm(x.n))) out.push(x); };
+    const local = isCountry(id) ? sitesBy.get(id) || [] : sites.filter(st => d3.geoDistance([st.lon, st.lat], [lon, lat]) * 6371 < (near ? 40 : 120));
+    for (const st of local) add({ n: st.n, img: "", url: st.wiki ? "https://fr.wikipedia.org/wiki/" + encodeURIComponent(st.wiki) : "", kind: st.wonder ? "7 merveilles du monde" : "Patrimoine mondial UNESCO", site: st });
+    if (isCountry(id)) return out;
+    const famous = await wikidataSpots(lon, lat, near ? 15 : 60);
+    (famous || []).forEach(add);
+    if (out.length < 6) (await wikiNearby(lon, lat, home)).forEach(add);
+    // une photo pour les sites UNESCO, quand Wikipédia en a une
+    await Promise.all(out.filter(x => x.site && !x.img).slice(0, 8).map(async x => { const ph = await fetchPhoto(x.site); if (ph) x.img = ph.list[0]; }));
+    return out.slice(0, 20);
   })().catch(() => []);
   suggCache.set(id, r);
+  r.then(l => { if (!l.length) suggCache.delete(id); }); // rien trouvé (hors ligne ?) : on réessaiera
   return r;
 }
 async function showSuggestions(p, i, keep) {
   const box = $("ss-sugg"), id = p.stops[i];
   if (!box) return;
+  if (!suggCache.has(id)) { box.innerHTML = `<p class="small">Recherche des incontournables…</p>`; box.hidden = false; }
   const all = await stopSuggestions(id);
   if ($("ss-sugg") !== box) return;
   const have = new Set(p.spots[i].map(x => norm(x.n)));
   const list = all.filter(x => !have.has(norm(x.n)));
-  if (!list.length) return;
-  box.innerHTML = `<p class="small">Idées autour de ${esc(placeName(id))}</p><div class="ss-cards">${list.map((x, k) => `
+  if (!list.length) { box.innerHTML = all.length ? "" : `<p class="small">Pas d'idée trouvée ici pour l'instant (connexion ?). Ajoute tes propres spots ci-dessous.</p>`; box.hidden = !box.innerHTML; return; }
+  box.innerHTML = `<p class="ss-sub">Incontournables à ${esc(placeName(id))} <span>touche ＋ pour l'ajouter</span></p><div class="ss-cards">${list.map((x, k) => `
     <div class="ss-card">${x.img ? `<img src="${esc(x.img)}" alt="" loading="lazy">` : `<div class="ss-noimg">${x.site ? (x.site.wonder ? "★" : "◆") : "📍"}</div>`}
       <button class="ss-plus" data-sg="${k}" aria-label="Ajouter ${esc(x.n)}">＋</button>
       <small>${esc(x.kind)}</small>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.n)}</a>` : `<b>${esc(x.n)}</b>`}</div>`).join("")}</div>`;

@@ -509,3 +509,6 @@ input, textarea, select { font-size: 16px !important; }
 .ss-stay i { font-style: normal; color: var(--ink-2); font-size: 20px; }
 .istop .t { cursor: pointer; }
 .istop .open-hint { display: block; font-style: normal; font-size: 12px; color: var(--trip, var(--me)); font-weight: 600; margin-top: 2px; }
+.ss-sub { margin: 4px 0 6px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.ss-sub span { font-weight: 400; color: var(--ink-2); margin-left: 4px; }
+.ss-sugg .ss-sub ~ .small, .ss-sugg > .small { margin: 0; }
