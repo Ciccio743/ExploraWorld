@@ -52,7 +52,14 @@ let iso2 = {};
 // drapeau emoji à partir du code ISO à 2 lettres
 const flag = code => iso2[code] ? [...iso2[code]].map(ch => String.fromCodePoint(0x1F1A5 + ch.charCodeAt(0))).join("") : "";
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
-let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [] };
+let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {} };
+// Couleurs de la carte : chaque pays visité a sa couleur (choisie, sinon attribuée), ou tout en or
+const PALETTE = ["#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
+const cleanColors = o => Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([k, v]) => /^[A-Z0-9-]{2,8}$/.test(k) && PALETTE.includes(v)));
+const autoColor = new Map();
+const countryColor = code => state.k[code] || (store.get("explora-colors") !== "gold" ? autoColor.get(code) : null) || null;
+// style de carte : « classic » (dessinée) ou « real » (satellite avec les reliefs)
+const REAL = (() => { try { return localStorage.getItem("explora-mapstyle") === "real"; } catch (e) { return false; } })();
 let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
@@ -92,12 +99,12 @@ function cleanPlans(list) {
   });
 }
 function serialize() {
-  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, t: Date.now() };
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, t: Date.now() };
 }
 function save() { store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
-  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans) };
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k) };
 } catch (e) {}
 quick = store.get("explora-quick") === "1";
 // les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
@@ -158,6 +165,14 @@ async function load() {
   countries = topojson.feature(world, world.objects.countries).features;
   const nb = topojson.neighbors(world.objects.countries.geometries);
   countries.forEach((f, i) => neighbors.set(f.id, nb[i].map(j => countries[j].id)));
+  // couleur attribuée à chaque pays, différente de celles de ses voisins
+  for (const f of [...countries].sort((a, b) => a.id.localeCompare(b.id))) {
+    const used = new Set((neighbors.get(f.id) || []).map(n => autoColor.get(n)));
+    let h = 0; for (const ch of f.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    let c = PALETTE[h % PALETTE.length];
+    for (let i = 0; used.has(c) && i < PALETTE.length; i++) c = PALETTE[(h + i) % PALETTE.length];
+    autoColor.set(f.id, c);
+  }
   for (const f of countries) byId.set(f.id, f);
   for (const r of topojson.feature(world, world.objects.regions).features) {
     r.area = d3.geoArea(r); r.code = r.properties.g;
@@ -311,6 +326,7 @@ function legPath(a, b, m) {
 /* ---------- Carte ---------- */
 const svg = d3.select("#map");
 const root = svg.append("g");
+const gTiles = root.append("g").attr("class", "tiles");
 const gBase = root.append("g");
 const gOverlay = root.append("g");
 const gNear = root.append("g").attr("class", "near");
@@ -321,7 +337,8 @@ const gRoute = root.append("g");
 const gSites = root.append("g");
 const gCities = root.append("g");
 const gMe = root.append("g");
-const projection = d3.geoNaturalEarth1();
+const projection = REAL ? d3.geoMercator() : d3.geoNaturalEarth1();
+document.body.classList.toggle("real", REAL);
 const path = d3.geoPath(projection);
 let W = 0, H = 0, k = 1;
 const tip = $("tip");
@@ -335,7 +352,36 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   gSites.selectAll(".site").attr("transform", siteTransform);
   gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
-}).on("end", drawCities);
+  if (REAL && !tileRaf) tileRaf = requestAnimationFrame(() => { tileRaf = 0; drawTiles(); });
+}).on("end", () => { drawCities(); drawTiles(); });
+// Carte réaliste : images satellite avec le relief (NASA Blue Marble, puis Sentinel-2 en zoomant fort)
+let tileRaf = 0;
+const tileUrl = (z, x, y) => z <= 8
+  ? `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_ShadedRelief_Bathymetry/default/GoogleMapsCompatible_Level8/${z}/${y}/${x}.jpeg`
+  : `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/g/${z}/${y}/${x}.jpg`;
+function drawTiles() {
+  if (!REAL || !W) return;
+  const t = d3.zoomTransform(svg.node());
+  const world = 2 * Math.PI * projection.scale();
+  const [ox, oy] = projection([-180, 85.0511287798]);
+  const zc = Math.max(1, Math.min(15, Math.round(Math.log2(world * t.k * Math.min(2, devicePixelRatio || 1) / 256))));
+  const tiles = [];
+  const add = z => {
+    const n = 2 ** z, T = world / n;
+    const x0 = Math.max(0, Math.floor((-t.x / t.k - ox) / T)), x1 = Math.min(n - 1, Math.floor(((W - t.x) / t.k - ox) / T));
+    const y0 = Math.max(0, Math.floor((-t.y / t.k - oy) / T)), y1 = Math.min(n - 1, Math.floor(((H - t.y) / t.k - oy) / T));
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) tiles.push({ id: z + "/" + x + "/" + y, z, x, y, X: ox + x * T, Y: oy + y * T, T });
+  };
+  // un fond peu détaillé toujours présent, puis les images plus fines par-dessus
+  add(2);
+  if (zc > 2) add(Math.min(zc, 8));
+  if (zc > 8) add(zc);
+  gTiles.selectAll("image").data(tiles, d => d.id).join(enter => enter.append("image")
+      .attr("href", d => tileUrl(d.z, d.x, d.y)).attr("preserveAspectRatio", "none")
+      .attr("x", d => d.X).attr("y", d => d.Y).attr("width", d => d.T * 1.002).attr("height", d => d.T * 1.002)
+      .on("error", function () { this.remove(); }))
+    .sort((a, b) => a.z - b.z);
+}
 svg.call(zoom).on("dblclick.zoom", null);
 
 function resize() {
@@ -343,13 +389,15 @@ function resize() {
   if (!r.width) return false;
   if (r.width === W && r.height === H) return false;
   W = r.width; H = r.height;
-  projection.fitExtent([[10, 10], [W - 10, H - 10]], { type: "Sphere" });
+  if (REAL) projection.fitExtent([[0, 10], [W, H - 10]], { type: "MultiPoint", coordinates: [[-180, -58], [180, 80]] });
+  else projection.fitExtent([[10, 10], [W - 10, H - 10]], { type: "Sphere" });
   zoom.translateExtent([[-W * .5, -H * .5], [W * 1.5, H * 1.5]]).extent([[0, 0], [W, H]]);
   return true;
 }
 
 function drawBase() {
-  for (const g of [gBase, gOverlay, gDetail, gRoute]) g.selectAll("*").remove();
+  for (const g of [gBase, gOverlay, gDetail, gRoute, gTiles]) g.selectAll("*").remove();
+  setTimeout(drawTiles);
   gBase.append("path").attr("class", "sphere").attr("d", path({ type: "Sphere" }));
   gBase.selectAll(".ocean-name").data(OCEANS).join("text")
     .attr("class", "ocean-name").attr("text-anchor", "middle")
@@ -368,23 +416,27 @@ function drawMap() {
   gBase.selectAll(".country")
     .classed("visited", d => state.c.has(d.id))
     .classed("wish", d => !state.c.has(d.id) && state.w.has(d.id))
-    .classed("active", d => d.id === current || near.has(d.id));
+    .classed("active", d => d.id === current || near.has(d.id))
+    .style("--c", d => countryColor(d.id));
   gNear.selectAll(".region").data([...near].flatMap(c => detailOf(c).regions), d => d.id).join(
     enter => enter.append("path").attr("d", path).on("click", (e, d) => { e.stopPropagation(); openCountry(d.code); })
-  ).attr("class", d => "region " + (state.r.has(d.id) ? "visited" : state.c.has(d.code) ? "in-visited" : state.w.has(d.id) || state.w.has(d.code) ? "wish" : ""));
+  ).attr("class", d => "region " + (state.r.has(d.id) ? "visited" : state.c.has(d.code) ? "in-visited" : state.w.has(d.id) || state.w.has(d.code) ? "wish" : ""))
+    .style("--c", d => countryColor(d.code));
   gNear.selectAll(".near-line").data([...near].map(c => detailOf(c).outline)).join("path").attr("class", "near-line").attr("d", path);
   const marked = new Set([...state.r.keys(), ...[...state.w.keys()].filter(id => regionById.has(id))]);
   const others = [...marked].map(id => regionById.get(id)).filter(r => r && r.code !== current && !near.has(r.code));
   gOverlay.selectAll(".region").data(others, d => d.id)
     .join(enter => enter.append("path").attr("d", path))
-    .attr("class", d => "region " + (state.r.has(d.id) ? "visited" : "wish"));
+    .attr("class", d => "region " + (state.r.has(d.id) ? "visited" : "wish"))
+    .style("--c", d => countryColor(d.code));
   const det = current && detailOf(current);
   gDetail.selectAll(".region").data(current ? (det ? det.regions : regionsBy.get(current) || []) : [], d => d.id + (d.detail ? "+" : "")).join(
     enter => enter.append("path").attr("class", "region").attr("d", path)
       .on("click", (e, d) => { e.stopPropagation(); tapRegion(d); })
       .on("pointermove", (e, d) => showTip(e, d.properties.n))
       .on("pointerleave", () => tip.hidden = true)
-  ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id));
+  ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id))
+    .style("--c", countryColor(current));
   gOutline.selectAll("path").data(current ? [det ? det.outline : byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
   gSel.selectAll("path").data(selected ? [shapeOf(selected)] : [], d => d.id + (d.detail ? "+" : "")).join("path").attr("class", "selected").attr("d", path);
   // sites du patrimoine mondial du pays ouvert : petits losanges, dorés une fois visités
@@ -603,7 +655,7 @@ const zoomTo = (feature, dur) => fitBounds(path.bounds(feature), dur);
 // On agrandit pour remplir la hauteur libre, centré sur l'Europe et l'Afrique ; on peut toujours dézoomer.
 let landY = null;
 function homeTransform() {
-  if (!landY) { const b = path.bounds({ type: "FeatureCollection", features: countries }); landY = [b[0][1], b[1][1]]; }
+  if (!landY) { const b = path.bounds({ type: "FeatureCollection", features: REAL ? countries.filter(f => d3.geoCentroid(f)[1] > -60) : countries }); landY = [b[0][1], b[1][1]]; }
   const topH = document.querySelector(".top").offsetHeight + 6;
   const sheetH = document.querySelector(".sheet .card").offsetHeight + 18;
   const availH = Math.max(140, H - sheetH - topH);
@@ -893,12 +945,14 @@ function renderSheet() {
       </div>` : ""}
       ${sheetMore ? `
       <div class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>
+      ${been || v ? `<div class="kcolors"><span>Couleur sur la carte</span><div class="swatches">${PALETTE.map(c => `<button type="button" class="swatch" data-kc="${c}" style="--c:${c}" aria-label="Couleur ${c}" aria-pressed="${countryColor(current) === c}"></button>`).join("")}</div></div>` : ""}
       ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
+    sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; save(); update(); });
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
     if ($("s-been")) $("s-been").onclick = () => {
       setCountry(current, !been, $("s-date") ? monthTs($("s-date").dataset.v) : 0);
@@ -943,14 +997,14 @@ function renderSheet() {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
       <p class="hint">Touche un pays pour zoomer dedans, puis choisis les départements, états ou régions où tu es allé.</p>
-      <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
+      <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:${store.get("explora-colors") === "gold" ? "var(--found)" : "conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"}"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
   } else {
     const n = state.c.size, next = MILESTONES.find(m => m > n) || 195, prev = [...MILESTONES].reverse().find(m => m <= n) || 0;
     sheet.innerHTML = `<div class="welcome">
       <div class="row between"><p class="w-big"><b>${n}</b> pays sur 195</p><p class="w-next">${n < 195 ? `Prochain palier : ${next}` : "Le monde entier !"}</p></div>
       <div class="bar w-bar"><i style="width:${n >= 195 ? 100 : (n - prev) / (next - prev) * 100}%"></i></div>
       <div class="row between"><p class="hint" style="margin:0">Touche un pays pour zoomer dedans.</p>
-      <div class="legend" style="margin:0"><span><b style="background:var(--found)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div></div>`;
+      <div class="legend" style="margin:0"><span><b style="background:${store.get("explora-colors") === "gold" ? "var(--found)" : "conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"}"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div></div>`;
   }
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
@@ -2025,13 +2079,15 @@ function applyTheme(t) {
   if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
   else delete document.documentElement.dataset.theme;
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
-    const own = m.media.includes("dark") ? "#0b1820" : "#c9d9e0";
-    m.content = t === "dark" ? "#0b1820" : t === "light" ? "#c9d9e0" : own;
+    const own = m.media.includes("dark") ? "#0b1820" : "#a8d4f0";
+    m.content = t === "dark" ? "#0b1820" : t === "light" ? "#a8d4f0" : own;
   });
 }
 function renderSettings() {
   const t = store.get("explora-theme") || "auto";
   document.querySelectorAll("[data-theme-opt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.themeOpt === t));
+  document.querySelectorAll("[data-mapstyle]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mapstyle === (REAL ? "real" : "classic")));
+  document.querySelectorAll("[data-colors]").forEach(b => b.setAttribute("aria-pressed", b.dataset.colors === (store.get("explora-colors") === "gold" ? "gold" : "multi")));
 }
 document.querySelectorAll("[data-theme-opt]").forEach(b => b.onclick = () => {
   store.set("explora-theme", b.dataset.themeOpt);
@@ -2039,6 +2095,16 @@ document.querySelectorAll("[data-theme-opt]").forEach(b => b.onclick = () => {
   renderSettings();
 });
 applyTheme(store.get("explora-theme") || "auto");
+// changer de style de carte change la projection : on recharge la page
+document.querySelectorAll("[data-mapstyle]").forEach(b => b.onclick = () => {
+  if ((b.dataset.mapstyle === "real") === REAL) return;
+  store.set("explora-mapstyle", b.dataset.mapstyle);
+  location.reload();
+});
+document.querySelectorAll("[data-colors]").forEach(b => b.onclick = () => {
+  store.set("explora-colors", b.dataset.colors);
+  renderSettings(); update();
+});
 
 $("btn-export").onclick = async () => {
   const name = "explora-sauvegarde-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -2063,6 +2129,7 @@ $("import-file").onchange = async e => {
     for (const [id, t] of toMap(d.w)) if (place(id) && !state.w.has(id)) state.w.set(id, t);
     for (const [id, t] of toMap(d.u)) if (siteById.has(id) && !state.u.has(id)) state.u.set(id, t);
     for (const p of cleanPlans(d.plans)) if (!state.plans.some(x => x.id === p.id)) state.plans.push(p);
+    state.k = { ...cleanColors(d.k), ...state.k };
     save(); update();
     toast(`Sauvegarde importée : ${added} nouveau${added > 1 ? "x" : ""} pays`);
   } catch (err) { toast("Ce fichier n'est pas une sauvegarde Explora."); }
@@ -2070,7 +2137,7 @@ $("import-file").onchange = async e => {
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
   if (b.dataset.armed) {
-    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [] }; save();
+    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {} }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
     update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;

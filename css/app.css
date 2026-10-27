@@ -1,10 +1,10 @@
 /* Explora World : plein écran, carte en brouillard qui se colore en or quand on explore.
    Barre d'onglets en bas, pages qui défilent au-dessus. */
 :root {
-  --ocean: #c9d9e0;
-  --ocean-line: #b6cad3;
-  --ocean-hi: #e3eef2;
-  --ocean-lo: #a9c3cf;
+  --ocean: #a8d4f0;
+  --ocean-line: #8fc3e6;
+  --ocean-hi: #d2ecfb;
+  --ocean-lo: #74b3df;
   --fog: #eef1ef;
   --fog-line: #a9b6bb;
   --found: #e8a317;
@@ -67,17 +67,17 @@ button { font: inherit; color: inherit; }
 .welcome .w-bar i { background: linear-gradient(90deg, var(--found-soft), var(--found)); }
 .ocean-name { font: italic 500 9.5px var(--f-body); letter-spacing: .16em; text-transform: uppercase; fill: var(--ink-2); opacity: .38; pointer-events: none; transition: opacity .3s; }
 .country { fill: var(--fog); stroke: var(--fog-line); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; }
-.country.visited { fill: var(--found-soft); }
+.country.visited { fill: color-mix(in srgb, var(--c, var(--found)) 55%, var(--fog)); }
 .country.active { fill: none; stroke: none; }
 .near .region { fill: var(--fog); stroke: var(--fog); stroke-width: .5; vector-effect: non-scaling-stroke; cursor: pointer; pointer-events: all; }
 .near-line { fill: none; stroke: var(--fog-line); stroke-width: .6; vector-effect: non-scaling-stroke; pointer-events: none; }
-.near .region.in-visited { fill: var(--found-soft); stroke: var(--found-soft); }
-.near .region.visited { fill: var(--found); stroke: var(--found); }
+.near .region.in-visited { fill: color-mix(in srgb, var(--c, var(--found)) 55%, var(--fog)); stroke: color-mix(in srgb, var(--c, var(--found)) 55%, var(--fog)); }
+.near .region.visited { fill: var(--c, var(--found)); stroke: var(--c, var(--found)); }
 .near .region.wish { fill: var(--wish-soft); stroke: var(--wish-soft); opacity: 1; }
 .region { fill: transparent; stroke: none; pointer-events: none; }
-.region.visited { fill: var(--found); }
+.region.visited { fill: var(--c, var(--found)); }
 .detail .region { fill: var(--fog); pointer-events: all; cursor: pointer; stroke: var(--fog-line); stroke-width: .6; vector-effect: non-scaling-stroke; }
-.detail .region.visited { fill: var(--found); stroke: var(--found-line); }
+.detail .region.visited { fill: var(--c, var(--found)); stroke: color-mix(in srgb, var(--c, var(--found)) 60%, #000); }
 .outline { fill: none; stroke: var(--ink); stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .selected { fill: none; stroke: var(--me); stroke-width: 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .me-halo { fill: var(--me); opacity: .22; }
@@ -512,3 +512,28 @@ input, textarea, select { font-size: 16px !important; }
 .ss-sub { margin: 4px 0 6px; font-size: 13px; font-weight: 700; color: var(--ink); }
 .ss-sub span { display: block; font-weight: 400; font-size: 12px; color: var(--ink-2); }
 .ss-sugg .ss-sub ~ .small, .ss-sugg > .small { margin: 0; }
+
+/* couleur d'un pays (fiche du pays) */
+.kcolors { margin-top: 12px; display: grid; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.kcolors .swatch { width: 28px; height: 28px; }
+/* carte réaliste : images satellite sous des frontières fines, pays visités en couleur translucide */
+body.real #view-map { background: #06121f; }
+.tiles image { pointer-events: none; }
+.real #map .country { fill: transparent; stroke: rgba(255, 255, 255, .5); stroke-width: .6; }
+.real #map .country.visited { fill: color-mix(in srgb, var(--c, var(--found)) 50%, transparent); stroke: var(--c, var(--found)); stroke-width: 1.2; }
+.real #map .country.wish { fill: rgba(91, 141, 239, .3); }
+.real #map .country.active { fill: none; stroke: none; }
+.real #map .near .region { fill: transparent; stroke: transparent; }
+.real #map .near .region.in-visited { fill: color-mix(in srgb, var(--c, var(--found)) 40%, transparent); stroke: transparent; }
+.real #map .near .region.visited { fill: color-mix(in srgb, var(--c, var(--found)) 60%, transparent); stroke: transparent; }
+.real #map .near-line { stroke: rgba(255, 255, 255, .5); }
+.real #map .region.visited { fill: color-mix(in srgb, var(--c, var(--found)) 60%, transparent); }
+.real #map .region.wish { fill: rgba(91, 141, 239, .4); }
+.real #map .detail .region { fill: transparent; stroke: rgba(255, 255, 255, .55); }
+.real #map .detail .region.visited { fill: color-mix(in srgb, var(--c, var(--found)) 60%, transparent); stroke: #fff; }
+.real #map .detail .region.wish { fill: rgba(91, 141, 239, .4); }
+.real #map .outline { stroke: #fff; stroke-width: 1.8; }
+.real #map .ocean-name { fill: #fff; opacity: .55; }
+.real #map .city { opacity: .95; }
+.real #map .city circle { fill: #fff; }
+.real #map .city text { fill: #fff; stroke: rgba(0, 0, 0, .65); stroke-opacity: 1; font-weight: 600; }

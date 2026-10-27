@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Explora World</title>
 <meta name="description" content="Remplis ta carte du monde : marque les pays, départements, états et régions où tu es allé.">
-<meta name="theme-color" content="#c9d9e0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#a8d4f0" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b1820" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -20,7 +20,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=45">
+<link rel="stylesheet" href="css/app.css?v=46">
 </head>
 <body>
 <div id="app">
@@ -85,6 +85,19 @@
           <p class="small" style="margin-top:10px">Auto suit le réglage de ton téléphone.</p>
         </div>
         <div class="block">
+          <h3>Carte</h3>
+          <div class="seg" role="group" aria-label="Style de carte">
+            <button data-mapstyle="classic">Dessinée</button>
+            <button data-mapstyle="real">Réaliste</button>
+          </div>
+          <p class="small" style="margin-top:10px">Réaliste : vue satellite avec les reliefs (il faut une connexion).</p>
+          <div class="seg" role="group" aria-label="Couleurs des pays" style="margin-top:14px">
+            <button data-colors="multi">🎨 Multicolore</button>
+            <button data-colors="gold">Tout en or</button>
+          </div>
+          <p class="small" style="margin-top:10px">Tu peux aussi choisir la couleur de chaque pays : ouvre le pays sur la carte, puis ⌃.</p>
+        </div>
+        <div class="block">
           <h3>Position</h3>
           <label class="switch"><input type="checkbox" id="set-autoloc">Quand l'appli est ouverte, me proposer de marquer la région où je suis si je ne l'ai pas encore visitée</label>
         </div>
@@ -98,7 +111,7 @@
         </div>
         <div class="block">
           <h3>À propos</h3>
-          <p class="small">Explora World · version 8<br>Frontières : Natural Earth (domaine public) et geoBoundaries (licences ouvertes). Villes et villages : GeoNames (CC BY 4.0) ; recherche en ligne : Photon, © contributeurs OpenStreetMap. Patrimoine mondial : liste UNESCO. Photos : Wikipédia. Itinéraires routiers : OSRM, © contributeurs OpenStreetMap.</p>
+          <p class="small">Explora World · version 8<br>Frontières : Natural Earth (domaine public) et geoBoundaries (licences ouvertes). Villes et villages : GeoNames (CC BY 4.0) ; recherche en ligne : Photon, © contributeurs OpenStreetMap. Patrimoine mondial : liste UNESCO. Photos : Wikipédia. Carte réaliste : NASA Blue Marble (GIBS) et Sentinel-2 cloudless 2016 par EOX (CC BY 4.0, données Copernicus modifiées). Itinéraires routiers : OSRM, © contributeurs OpenStreetMap.</p>
         </div>
       </div>
     </section>
@@ -128,6 +141,6 @@
 
 <script src="vendor/d3.min.js"></script>
 <script src="vendor/topojson-client.min.js"></script>
-<script src="js/app.js?v=45"></script>
+<script src="js/app.js?v=46"></script>
 </body>
 </html>
