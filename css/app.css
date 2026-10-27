@@ -612,3 +612,11 @@ body.viewing #s-been, body.viewing #s-mark, body.viewing #s-site, body.viewing #
 .kdot { flex: none; width: 34px; height: 34px; border-radius: 50%; padding: 0; cursor: pointer; background: var(--c, var(--found)); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--c, var(--found)), var(--shadow); position: relative; }
 .kdot::after { content: "🎨"; position: absolute; right: -7px; bottom: -7px; font-size: 13px; }
 .kdot[aria-expanded="true"] { transform: scale(1.1); }
+/* Royaume-Uni : les quatre nations */
+.nation-line { fill: none; stroke: var(--ink); stroke-width: 2.2; stroke-dasharray: 6 3; vector-effect: non-scaling-stroke; pointer-events: none; opacity: .8; }
+.real #map .nation-line { stroke: #fff; }
+.nation-name { font: 800 13px var(--f-display); letter-spacing: .12em; text-transform: uppercase; fill: var(--ink); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; opacity: .75; pointer-events: none; }
+.nations { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.nation { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+.nation b { font-weight: 700; color: var(--ink-2); margin-left: 2px; }
+.nation.on { border-color: var(--c, var(--found)); background: color-mix(in srgb, var(--c, var(--found)) 20%, var(--bg)); }

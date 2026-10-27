@@ -57,6 +57,19 @@ let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [],
 const PALETTE = ["#f5b83d", "#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
 const cleanColors = o => Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([k, v]) => /^[A-Z0-9-]{2,8}$/.test(k) && PALETTE.includes(v)));
 const autoColor = new Map();
+// noms faux ou anglais dans les données Natural Earth
+const REGION_NAMES = { "UGA-R-Western": "Région de l'Ouest", "UGA-R-Central": "Région centrale", "UGA-R-Eastern": "Région de l'Est", "UGA-R-Northern": "Région du Nord",
+  "SGP-4873": "Nord-Ouest", "SGP-4872": "Sud-Ouest", "SGP-4875": "Sud-Est", "SGP-4874": "Nord-Est" };
+// Royaume-Uni : les quatre nations, pour les distinguer sur la carte, dans la fiche et dans la recherche
+const UK_NATIONS = {
+  SCT: { n: "Écosse", f: "🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}", r: "Scottish-Borders Dumfries-et-Galloway Stirling-et-Forth Edimbourg-et-Lothian Ayrshire Glasgow-et-Clyde Argyll-et-Bute Highlands Aberdeen-et-Grampian Tayside Fife Iles-ecossaises" },
+  WLS: { n: "Pays de Galles", f: "🏴\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}", r: "Clwyd Powys Gwent Cardiff-et-Vale-of-Glamorgan Glamorgan-central Swansea-et-Glamorgan-Ouest Dyfed Gwynedd-et-Anglesey" },
+  NIR: { n: "Irlande du Nord", f: "🇬🇧", r: "Londonderry Tyrone Fermanagh Armagh Down Antrim-et-Belfast" },
+  OVS: { n: "Territoires d'outre-mer", f: "🇬🇧", r: "Dhekelia Akrotiri Gibraltar" },
+  ENG: { n: "Angleterre", f: "🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}", r: "" }
+};
+const nationOfId = new Map(Object.entries(UK_NATIONS).flatMap(([k, v]) => v.r.split(" ").filter(Boolean).map(x => ["GBR-R-" + x, k])));
+const nationOf = id => String(id).startsWith("GBR-") ? nationOfId.get(id) || "ENG" : null;
 // Journal de chaque pays : { cover, entries: [{ id, d, t, x, e, ph: [ids des photos] }] } ; les photos sont dans IndexedDB
 const MOODS = ["😍", "😀", "😌", "🤩", "😴", "🥵", "🥶", "🍽️", "🏖️", "🏔️", "🚶", "🎉"];
 // Photos accrochées sur la carte : { id, ph (photo sur l'appareil), lon, lat, d (jour de la photo) }
@@ -172,9 +185,19 @@ function kindOf(code) {
   return (top && KIND[top[0]]) || "régions";
 }
 
+let worldTopo = null;
+// frontières entre les nations du Royaume-Uni et contour de chacune (pour les nommer)
+function ukNations(t, obj) {
+  const geoms = obj.geometries.filter(g => (g.properties?.g || g.id.split("-")[0]) === "GBR" || String(g.id).startsWith("GBR-"));
+  return {
+    mesh: topojson.mesh(t, { type: "GeometryCollection", geometries: geoms }, (a, b) => a !== b && nationOf(a.id) !== nationOf(b.id)),
+    shapes: ["SCT", "ENG", "WLS", "NIR"].map(k => ({ k, shape: topojson.merge(t, geoms.filter(g => nationOf(g.id) === k)) }))
+  };
+}
+let ukWorld = null;
 async function load() {
   // carte légère du monde : pays et régions tirés des mêmes contours, donc frontières identiques
-  const [world, merged, split] = await Promise.all([
+  const [world, merged, split] = worldTopo = await Promise.all([
     fetch(dataUrl("world.json")).then(r => r.json()),
     fetch(dataUrl("merged.json")).then(r => r.json()).catch(() => ({})),
     fetch(dataUrl("split.json")).then(r => r.json()).catch(() => ({}))
@@ -187,6 +210,7 @@ async function load() {
   }
   migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
+  ukWorld = ukNations(world, world.objects.regions);
   const nb = topojson.neighbors(world.objects.countries.geometries);
   countries.forEach((f, i) => neighbors.set(f.id, nb[i].map(j => countries[j].id)));
   // couleur attribuée à chaque pays, différente de celles de ses voisins
@@ -201,6 +225,7 @@ async function load() {
   for (const f of countries) byId.set(f.id, f);
   for (const r of topojson.feature(world, world.objects.regions).features) {
     r.area = d3.geoArea(r); r.code = r.properties.g;
+    if (REGION_NAMES[r.id]) r.properties.n = REGION_NAMES[r.id];
     regionById.set(r.id, r); worldArea += r.area;
     if (!regionsBy.has(r.code)) regionsBy.set(r.code, []);
     regionsBy.get(r.code).push(r);
@@ -238,8 +263,9 @@ function ensureDetail(code) {
     const regions = topojson.feature(t, obj).features;
     // garde-fou : un détail qui ne correspond pas à la carte légère (ancienne version en cache) est ignoré
     if (regions.some(r => !regionById.has(r.id))) throw new Error("détail périmé");
-    for (const r of regions) { r.detail = true; r.code = code; }
+    for (const r of regions) { r.detail = true; r.code = code; if (REGION_NAMES[r.id]) r.properties.n = REGION_NAMES[r.id]; }
     const d = { regions, byId: new Map(regions.map(r => [r.id, r])), outline: topojson.merge(t, obj.geometries) };
+    if (code === "GBR") d.nations = ukNations(t, obj);
     details.set(code, d);
     return d;
   }).catch(() => { details.delete(code); return null; });
@@ -378,6 +404,7 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   gCities.selectAll(".city").attr("transform", cityTransform);
   gSites.selectAll(".site").attr("transform", siteTransform);
   gPins.selectAll(".pin-g").attr("transform", pinTransform);
+  gOutline.selectAll(".nation-name").attr("transform", d => { const [x, y] = path.centroid(d.shape); return `translate(${x},${y}) scale(${1 / k})`; });
   gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
   if (REAL && !tileRaf) tileRaf = requestAnimationFrame(() => { tileRaf = 0; drawTiles(); });
@@ -466,6 +493,11 @@ function drawMap() {
   ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id))
     .style("--c", countryColor(current));
   gOutline.selectAll("path").data(current ? [det ? det.outline : byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
+  // Royaume-Uni ouvert : frontières des nations bien marquées, et leur nom
+  const uk = current === "GBR" ? (det && det.nations) || ukWorld : null;
+  gOutline.selectAll(".nation-line").data(uk ? [uk.mesh] : []).join("path").attr("class", "nation-line").attr("d", path);
+  gOutline.selectAll(".nation-name").data(uk ? uk.shapes : [], d => d.k).join("text").attr("class", "nation-name").attr("text-anchor", "middle")
+    .text(d => UK_NATIONS[d.k].n).attr("transform", d => { const [x, y] = path.centroid(d.shape); return `translate(${x},${y}) scale(${1 / k})`; });
   gSel.selectAll("path").data(selected ? [shapeOf(selected)] : [], d => d.id + (d.detail ? "+" : "")).join("path").attr("class", "selected").attr("d", path);
   // sites du patrimoine mondial du pays ouvert : petits losanges, dorés une fois visités
   gSites.selectAll(".site").data(current ? (sitesBy.get(current) || []).filter(st => regionIn(current, st.lon, st.lat) || st.codes.length === 1) : [], d => d.id).join(
@@ -679,6 +711,10 @@ function fitBounds([[x0, y0], [x1, y1]], dur = 650, pad = .9) {
   svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, t);
 }
 const zoomTo = (feature, dur) => fitBounds(path.bounds(feature), dur);
+function zoomNation(k) {
+  const uk = detailOf("GBR")?.nations || ukWorld, sh = uk && uk.shapes.find(x => x.k === k);
+  if (sh) zoomTo(sh.shape);
+}
 
 // Vue d'accueil : en portrait, le monde entier tient dans une bande trop fine.
 // On agrandit pour remplir la hauteur libre, centré sur l'Europe et l'Afrique ; on peut toujours dézoomer.
@@ -962,6 +998,8 @@ function renderSheet() {
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
+      ${current === "GBR" ? `<div class="nations">${["ENG", "SCT", "WLS", "NIR"].map(k => { const rs = (regionsBy.get("GBR") || []).filter(r => nationOf(r.id) === k), vv = rs.filter(r => state.r.has(r.id)).length;
+        return `<button class="nation ${vv ? "on" : ""}" data-nation="${k}">${UK_NATIONS[k].f} ${esc(UK_NATIONS[k].n)} <b>${vv}/${rs.length}</b></button>`; }).join("")}</div>` : ""}
       ${colorOpen && (been || v) ? `<div class="kcolors"><span>Choisis sa couleur sur ta carte</span><div class="swatches">${PALETTE.map(c => `<button type="button" class="swatch" data-kc="${c}" style="--c:${c}" aria-label="Couleur ${c}" aria-pressed="${countryColor(current) === c}"></button>`).join("")}</div></div>` : ""}
       ${site ? `
       <div class="pick">
@@ -970,7 +1008,7 @@ function renderSheet() {
       </div>
       <div class="photo" id="s-photo" hidden></div>` : sel ? `
       <div class="pick">
-        <div class="name"><b>${esc(sel.properties.n)}</b><small>${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
+        <div class="name"><b>${esc(sel.properties.n)}</b><small>${nationOf(sel.id) ? esc(UK_NATIONS[nationOf(sel.id)].n) + " · " : ""}${selOn ? (fem ? "Visitée" : "Visité") : selWish ? "Dans tes envies" : (fem ? "Pas encore visitée" : "Pas encore visité")}</small></div>
         ${!selOn ? `<button class="btn small wishbtn" id="s-swish" aria-pressed="${selWish}" aria-label="Envie">${selWish ? "★" : "☆"}</button>` : ""}
         <button class="btn small ${selOn ? "done" : "primary"}" id="s-mark">${selOn ? "Retirer" : "Marquer " + (fem ? "visitée" : "visité")}</button>
       </div>` : askRegions === current && n > 1 && !v && !site ? `
@@ -986,6 +1024,7 @@ function renderSheet() {
       ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
+    sheet.querySelectorAll("[data-nation]").forEach(b => b.onclick = () => zoomNation(b.dataset.nation));
     $("s-journal").onclick = () => journalSheet(current);
     sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; colorOpen = false; save(); update(); });
     if ($("s-color")) $("s-color").onclick = () => { colorOpen = !colorOpen; renderSheet(); };
@@ -2418,10 +2457,11 @@ function drawTripMap(p0) {
 function searchHits(s, withRegions, withSites = false, extra = []) {
   const hits = [];
   for (const f of countries) if (norm(f.properties.n).includes(s)) hits.push({ n: f.properties.n, k: "pays", c: f.id });
+  for (const [key, nt] of Object.entries(UK_NATIONS)) if (key !== "OVS" && norm(nt.n).includes(s)) hits.push({ n: nt.n, k: "Royaume-Uni", c: "GBR", nation: key });
   hits.sort((a, b) => norm(a.n).indexOf(s) - norm(b.n).indexOf(s));
   if (withRegions && s.length >= 3) for (const r of regionById.values()) {
     if (hits.length > 30) break;
-    if (norm(r.properties.n).includes(s)) hits.push({ n: r.properties.n, k: byId.get(r.code)?.properties.n || "", c: r.code, r: r.id });
+    if (norm(r.properties.n).includes(s)) hits.push({ n: r.properties.n, k: (nationOf(r.id) ? UK_NATIONS[nationOf(r.id)].n + " · " : "") + (byId.get(r.code)?.properties.n || ""), c: r.code, r: r.id });
   }
   if (s.length >= 3 && hits.length < 12) {
     const match = k => k && (k.startsWith(s) || (s.length >= 4 && k.includes(s)));
@@ -2434,7 +2474,7 @@ function searchHits(s, withRegions, withSites = false, extra = []) {
       const r = regionNear(c.code, c.lon, c.lat);
       if (!r) continue;
       seen.add(dup);
-      hits.push({ n: c.n, k: r.properties.n + " · " + (byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
+      hits.push({ n: c.n, k: r.properties.n + " · " + (nationOf(r.id) ? UK_NATIONS[nationOf(r.id)].n : byId.get(c.code)?.properties.n || ""), c: c.code, r: r.id, city: c });
     }
   }
   if (withSites && s.length >= 4) for (const st of sites) {
@@ -2476,8 +2516,9 @@ function bindSearch(input, list, withRegions, label, pick, withSites = false) {
   input.addEventListener("keydown", e => { if (e.key === "Escape") { input.value = ""; list.hidden = true; } });
   input.addEventListener("blur", () => setTimeout(() => list.hidden = true, 200));
 }
-bindSearch($("q"), $("results"), true, h => h.k, (c, r, city, site) => {
+bindSearch($("q"), $("results"), true, h => h.k, (c, r, city, site, h) => {
   openCountry(c, r, city);
+  if (h?.nation) setTimeout(() => zoomNation(h.nation), 50);
   if (site) { selSite = site; const st = siteById.get(site); update(); fitBounds([projection([st.lon - .6, st.lat + .4]), projection([st.lon + .6, st.lat - .4])]); }
 }, true);
 bindSearch($("add-q"), $("add-results"), () => tripView === "wish",

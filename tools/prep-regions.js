@@ -104,7 +104,7 @@ fc.features = fc.features.filter(f => !DROP.has(f.properties.adm0_a3)).map(f => 
   if (key) {
     id = g + "-R-" + slug(key);
     merged[p.adm1_code] = id;
-    n = FR[key] || key;
+    n = FR[key] && (g === "GBR" || !/Angleterre/.test(FR[key])) ? FR[key] : key; // « Eastern » (Ouganda) n'est pas l'Est de l'Angleterre
     t = "Region";
   }
   f.properties = { id, n, t, g };
