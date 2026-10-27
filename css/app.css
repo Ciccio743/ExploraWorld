@@ -460,12 +460,12 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 input, textarea, select { font-size: 16px !important; }
 /* fiche d'une étape */
 .ss-back { align-items: flex-end; padding: 0; z-index: 70; }
-.ss { position: relative; width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 0; border-radius: 22px 22px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.ss { position: relative; width: 100%; max-width: 560px; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 36px); overflow-x: hidden; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; padding: 0; border-radius: 22px 22px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
 .ss-in { padding: 16px 18px 0; display: grid; gap: 12px; }
 .ss-in h4 { margin: 8px 0 0; font: 800 17px/1.2 var(--f-display); }
-.ss-x { position: absolute; top: 10px; right: 10px; z-index: 2; width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); color: var(--ink); }
-.ss-photo { margin: 0; }
-.ss-photo .slides { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.ss-x { position: sticky; top: 10px; display: grid; place-items: center; margin: 10px 10px -46px auto; z-index: 3; box-shadow: var(--shadow); width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); color: var(--ink); }
+.ss-photo { margin: 0; overflow: hidden; border-radius: 22px 22px 0 0; }
+.ss-photo .slides { touch-action: pan-x pan-y; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
 .ss-photo .slides::-webkit-scrollbar { display: none; }
 .ss-photo img { flex: 0 0 100%; width: 100%; height: 220px; object-fit: cover; background: var(--fog); scroll-snap-align: center; }
 .ss-photo .dots { display: flex; justify-content: center; gap: 5px; margin-top: 6px; }
@@ -493,7 +493,7 @@ input, textarea, select { font-size: 16px !important; }
 .ss-add { display: flex; gap: 8px; }
 .ss-add input { flex: 1; min-width: 0; font: inherit; color: var(--ink); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
 .ss-sugg .small { margin: 0 0 6px; }
-.ss-cards { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; margin: 0 -18px; padding: 0 18px 4px; }
+.ss-cards { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding: 0 0 4px; touch-action: pan-x pan-y; }
 .ss-cards::-webkit-scrollbar { display: none; }
 .ss-card { position: relative; flex: 0 0 140px; display: grid; gap: 2px; align-content: start; }
 .ss-card img, .ss-noimg { width: 140px; height: 100px; object-fit: cover; border-radius: 14px; background: var(--fog); display: grid; place-items: center; font-size: 26px; color: var(--trip, var(--me)); }

@@ -1615,8 +1615,8 @@ function stopSheet(p, i) {
   const draw = () => {
     const d = stopDays(p, i);
     back.innerHTML = `<div class="card ss" role="dialog" aria-label="Étape ${i + 1} : ${esc(placeName(id))}">
-      <div class="ss-photo" id="ss-photo" hidden></div>
       <button class="icon-btn ss-x" data-ss="close" aria-label="Fermer">✕</button>
+      <div class="ss-photo" id="ss-photo" hidden></div>
       <div class="ss-in">
         <div class="ss-head"><span class="n">${i + 1}</span><span class="t"><b>${esc(placeName(id))}</b><small>${esc(placeSub(id) || "")}</small></span></div>
         <div class="ss-when">
@@ -1660,6 +1660,10 @@ function stopSheet(p, i) {
     showStopPhoto(id);
   };
   back.onclick = e => { if (e.target === back) close(); };
+  // glisser vers le bas depuis le haut de la fiche la ferme
+  let y0 = null;
+  back.addEventListener("touchstart", e => { const ss = back.querySelector(".ss"); y0 = ss && ss.scrollTop <= 0 ? e.touches[0].clientY : null; }, { passive: true });
+  back.addEventListener("touchend", e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 110) close(); y0 = null; });
   draw();
 }
 // Idées autour de l'étape : sites UNESCO proches, puis les lieux qui ont un article Wikipédia avec photo
