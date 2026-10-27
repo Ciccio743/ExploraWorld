@@ -898,7 +898,7 @@ function renderSheet() {
       </ol>
       <div class="btns"><button class="btn small" id="s-edit">Modifier le projet</button></div>`;
     $("s-close").onclick = () => { routePlan = null; openWorld(); };
-    $("s-edit").onclick = () => { editPlan = copyPlan(plan); showTab("plans"); };
+    $("s-edit").onclick = () => { editPlan = copyPlan(plan); tripAdd = null; showTab("plans"); };
   } else if (!state.c.size && !state.w.size) {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
@@ -1270,7 +1270,7 @@ function renderPlans() {
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
     const p = state.plans.find(x => x.id === el.dataset.plan);
-    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); tripCam = null; tripFocus = null; renderPlans(); $("view-plans").scrollTo(0, 0); };
+    el.querySelector('[data-act="open"]').onclick = () => { editPlan = copyPlan(p); tripCam = null; tripFocus = null; tripAdd = null; tripPanel = false; renderPlans(); $("view-plans").scrollTo(0, 0); };
     const done = el.querySelector('[data-act="done"]');
     if (done) done.onclick = () => {
       if (!done.dataset.armed) {
@@ -1320,7 +1320,7 @@ function commitTrip() {
 }
 // Un trip se fait en deux temps : d'abord le nom, la couleur et les dates (« Valider »),
 // puis la carte en plein écran où l'on ajoute les étapes.
-let tripPanel = true; // liste des étapes dépliée sous la carte
+let tripPanel = false; // liste des étapes dépliée sous la carte
 function renderTrip(box) {
   const p = editPlan;
   p.color = p.color || TRIP_COLORS[0];
@@ -1366,7 +1366,7 @@ function renderTripSetup(box) {
   $("e-start").onclick = () => dates(false);
   $("e-end").onclick = () => dates(true);
   box.querySelectorAll("[data-color]").forEach(b => b.onclick = () => { p.color = b.dataset.color; renderPlans(); });
-  $("e-ok").onclick = () => { p.setup = false; commitTrip(); tripCam = null; renderPlans(); };
+  $("e-ok").onclick = () => { p.setup = false; commitTrip(); tripCam = null; tripAdd = p.stops.length ? null : { id: "", nights: 1, mode: "" }; renderPlans(); };
   if ($("e-del")) $("e-del").onclick = e => {
     const b = e.currentTarget;
     if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer la suppression"; return; }
@@ -1378,9 +1378,22 @@ function renderTripSetup(box) {
 }
 function renderTripMap(box) {
   const p = editPlan, t = tripTotals(p);
-  const modeSel = i => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
-    `<option value="${k}" ${legMode(p, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
+  const modeSel = (i, pl = p) => `<select data-leg="${i}" aria-label="Trajet vers l'étape ${i + 1}">${Object.entries(MODES).map(([k, [ic, n]]) =>
+    `<option value="${k}" ${legMode(pl, i) === k ? "selected" : ""}>${ic} ${n}</option>`).join("")}</select>`;
   const sum = p.stops.length ? [plural(p.stops.length, "étape", "étapes"), t.nights ? plural(t.nights, "nuit", "nuits") : "", t.km ? fmtKm(t.km, true) : "", t.flights ? plural(t.flights, "vol", "vols") : ""].filter(Boolean).join(" · ") : "Aucune étape pour l'instant";
+  // choix de la prochaine étape : le lieu, ses nuits et le trajet, puis « Valider l'étape »
+  const n = p.stops.length, q = pendingPlan(p), ql = tripAdd?.id && n ? legInfo(q, n) : null;
+  const addBox = !tripAdd ? "" : `<div class="tf-add-box">
+    <div class="tf-add-head"><span class="n">${n + 1}</span><span class="t">${tripAdd.id
+      ? `<b>${esc(placeName(tripAdd.id))}</b><small>${esc(placeSub(tripAdd.id) || "")}</small>`
+      : `<b>Étape ${n + 1}</b><small>Touche un lieu sur la carte ou cherche-le en haut</small>`}</span></div>
+    ${tripAdd.id ? `<div class="tf-add-opts">
+      ${n ? `<span class="leg">${modeSel(n, q)}<span>${fmtKm(ql.km, ql.real)} · ${fmtDur(ql.h, ql.real)}</span></span>` : ""}
+      <span class="nights"><button data-ant="-1" aria-label="Une nuit de moins" ${tripAdd.nights ? "" : "disabled"}>−</button><span>${tripAdd.nights ? plural(tripAdd.nights, "nuit", "nuits") : "0 nuit"}</span><button data-ant="1" aria-label="Une nuit de plus">+</button></span>
+    </div>` : ""}
+    <div class="btns"><button class="btn primary" id="e-ok-stop" ${tripAdd.id ? "" : "disabled"}>Valider l'étape</button><button class="btn" id="e-cancel-stop">Annuler</button></div>
+    ${!n && state.w.size ? `<button class="linkish" id="e-wishes">ou reprendre mes ${plural(state.w.size, "envie", "envies")}</button>` : ""}
+  </div>`;
   box.innerHTML = `
     <div class="trip-full">
       <svg id="trip-map" aria-label="Carte du trip"></svg>
@@ -1388,16 +1401,17 @@ function renderTripMap(box) {
         <button class="icon-btn tf-btn" id="e-back" aria-label="Retour à mes projets">‹</button>
         <button class="tf-title" id="e-edit" aria-label="Modifier le nom, la couleur et les dates"><b>${esc(p.name)}</b><small>${esc(planDates(p) || "Sans dates")}</small><span>✎</span></button>
         <button class="icon-btn tf-btn" id="tm-fit" aria-label="Recentrer la carte">◎</button>
-        <div class="add tf-search">
+        ${tripAdd ? `<div class="add tf-search">
           <input id="e-q" type="search" placeholder="🔍 Chercher une ville, une région, un pays…" autocomplete="off" aria-label="Chercher une étape">
           <ul id="e-results" class="card results" hidden></ul>
-        </div>
+        </div>` : ""}
       </div>
       <div class="tf-panel ${tripPanel ? "open" : ""}">
-        <span class="tm-hint">Touche une ville ou cherche-la en haut</span>
+        ${tripAdd ? `<span class="tm-hint">${tripFocus ? "Touche une région, une ville ou un site ◆" : "Touche une ville ou un pays, ou cherche en haut"}</span>` : ""}
         ${p.stops.some((_, i) => i && ROAD[legMode(p, i)]) ? `<span class="tm-credit">Routes © OpenStreetMap</span>` : ""}
-        <button class="tf-handle" id="tf-toggle" aria-expanded="${tripPanel}"><i></i><span>${esc(sum)}</span><span class="chev">${tripPanel ? "▾" : "▴"}</span></button>
-        ${tripPanel ? `<div class="tf-list">
+        ${tripAdd ? addBox : `
+        ${p.stops.length ? `<button class="tf-handle" id="tf-toggle" aria-expanded="${tripPanel}"><i></i><span>${esc(sum)}</span><span class="chev">${tripPanel ? "▾" : "▴"}</span></button>` : ""}
+        ${tripPanel && p.stops.length ? `<div class="tf-list">
           <ol class="itin">${p.stops.map((id, i) => {
             const l = i && legInfo(p, i);
             return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km, l.real)} · ${fmtDur(l.h, l.real)}</span></li>` : ""}
@@ -1408,26 +1422,43 @@ function renderTripMap(box) {
               <span class="moves"><button class="icon-btn" data-rm aria-label="Retirer ${esc(placeName(id))}">✕</button>${p.stops.length > 1 ? `<span class="grip" aria-label="Glisser pour changer l'ordre" title="Glisser pour changer l'ordre">≡</span>` : ""}</span>
             </li>`; }).join("")}
           </ol>
-          ${!p.stops.length && state.w.size ? `<div class="btns"><button class="btn small" id="e-wishes">Reprendre mes ${plural(state.w.size, "envie", "envies")}</button></div>` : ""}
-          ${p.stops.length ? `<div class="btns"><button class="btn small" id="e-big">Voir sur ma carte</button></div>` : ""}
+          <div class="btns"><button class="btn small" id="e-big">Voir sur ma carte</button></div>
         </div>` : ""}
+        <button class="btn primary tf-add" id="e-add">＋ Ajouter une étape</button>`}
       </div>
     </div>`;
   const redo = () => { commitTrip(); renderPlans(); };
   $("e-back").onclick = () => { if (!p.isNew || p.stops.length) commitTrip(); editPlan = null; document.body.classList.remove("trip-open"); update(); renderPlans(); };
   $("e-edit").onclick = () => { p.setup = true; renderPlans(); $("view-plans").scrollTo(0, 0); };
-  $("tf-toggle").onclick = () => { tripPanel = !tripPanel; renderPlans(); };
-  bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
-    const id = city && h?.city ? cityId(h.city, r) : r || c;
-    if (!addTripStop(p, id)) return;
-    tripCam = null; // la carte se recadre sur la nouvelle étape
-    redo();
-  });
+  if ($("tf-toggle")) $("tf-toggle").onclick = () => { tripPanel = !tripPanel; renderPlans(); };
+  if ($("e-add")) $("e-add").onclick = () => { tripAdd = { id: "", nights: 1, mode: "" }; tripPanel = false; renderPlans(); };
+  if (tripAdd) {
+    bindSearch($("e-q"), $("e-results"), true, h => h.k, (c, r, city, site, h) => {
+      const id = city && h?.city ? cityId(h.city, r) : r || c;
+      if (p.stops[p.stops.length - 1] === id) { toast("C'est déjà ta dernière étape", 1400); return; }
+      tripAdd = { id, nights: tripAdd.nights, mode: "" };
+      tripCam = null; // la carte se recadre sur l'étape proposée
+      renderPlans();
+    });
+    box.querySelectorAll("[data-ant]").forEach(b => b.onclick = () => { tripAdd.nights = Math.max(0, Math.min(99, tripAdd.nights + +b.dataset.ant)); renderPlans(); });
+    const ls = box.querySelector(".tf-add-box [data-leg]");
+    if (ls) ls.onchange = () => { tripAdd.mode = ls.value; renderPlans(); };
+    $("e-cancel-stop").onclick = () => { tripAdd = null; renderPlans(); };
+    $("e-ok-stop").onclick = () => {
+      if (!tripAdd.id || !addTripStop(p, tripAdd.id)) return;
+      p.nights[p.nights.length - 1] = tripAdd.nights;
+      p.modes[p.modes.length - 1] = tripAdd.mode;
+      tripAdd = null; tripPanel = false;
+      tripCam = null; // carte en plein écran sur tout le trip
+      commitTrip(); renderPlans();
+      toast(`Étape ${p.stops.length} ajoutée ✓`, 1400);
+    };
+  }
   if ($("e-wishes")) $("e-wishes").onclick = () => {
     for (const id of state.w.keys()) if (place(id) && !p.stops.includes(id)) { p.stops.push(id); p.nights.push(1); p.modes.push(""); }
-    tripCam = null; redo();
+    tripAdd = null; tripCam = null; redo();
   };
-  box.querySelectorAll("[data-leg]").forEach(sel => sel.onchange = () => { p.modes[+sel.dataset.leg] = sel.value; redo(); });
+  box.querySelectorAll(".tf-list [data-leg]").forEach(sel => sel.onchange = () => { p.modes[+sel.dataset.leg] = sel.value; redo(); });
   box.querySelectorAll(".istop").forEach(li => {
     const i = +li.dataset.i;
     li.querySelectorAll("[data-nt]").forEach(b => b.onclick = () => { p.nights[i] = Math.max(0, Math.min(99, p.nights[i] + +b.dataset.nt)); redo(); });
@@ -1487,6 +1518,9 @@ function regionsOnRoute(coords) {
 // Vue de la carte du trip : gardée tant qu'on modifie le même trip, pour que la carte ne saute pas
 let tripCam = null, tripBig = false;
 let tripFocus = null, tripFocusGo = false; // pays ouvert sur la carte du trip (ses régions et ses sites)
+// étape en train d'être choisie : { id, nights, mode } (id vide tant qu'aucun lieu n'est touché)
+let tripAdd = null;
+const pendingPlan = p => !tripAdd?.id ? p : { ...p, stops: [...p.stops, tripAdd.id], nights: [...p.nights, tripAdd.nights], modes: [...p.modes, tripAdd.mode] };
 function addTripStop(p, id) {
   if (p.stops[p.stops.length - 1] === id) return false;
   p.stops.push(id); p.nights.push(1); p.modes.push("");
@@ -1517,7 +1551,9 @@ function stopMenu(p, i) {
   back.querySelector('[data-mp="cancel"]').onclick = close;
   back.querySelector('[data-mp="rm"]').onclick = () => { close(); removeTripStop(p, i); commitTrip(); renderPlans(); toast("Étape retirée", 1200); };
 }
-function drawTripMap(p) {
+function drawTripMap(p0) {
+  // l'étape en cours de choix apparaît déjà sur la carte, avec son trajet
+  const p = pendingPlan(p0), pend = p !== p0;
   const el = $("trip-map");
   if (!el) return;
   const W = el.clientWidth || 360, H = el.clientHeight || 260;
@@ -1561,17 +1597,19 @@ function drawTripMap(p) {
   g.selectAll(".tm-reg").data([...codes].flatMap(c => regionsBy.get(c) || [])).join("path")
     .attr("class", d => "tm-reg" + (onIds.has(d.id) || onIds.has(d.code) ? " on" : passIds.has(d.id) ? " pass" : "")).attr("d", path);
   // pays touché : on l'ouvre comme sur la carte principale
-  const addStop = (id, name) => {
-    if (!addTripStop(p, id)) return;
-    commitTrip(); renderPlans();
-    toast(`${name} : étape ${p.stops.length} ✓`, 1200);
+  // toucher un lieu le propose comme prochaine étape, à valider en bas
+  const addStop = id => {
+    if (p0.stops[p0.stops.length - 1] === id) { toast("C'est déjà ta dernière étape", 1400); return; }
+    tripAdd = { id, nights: tripAdd?.nights ?? 1, mode: "" };
+    tripPanel = false;
+    renderPlans();
   };
   g.selectAll(".tm-land").on("click", (e, d) => {
     e.stopPropagation();
     if (tripFocus === d.id) return;
     tripFocus = d.id; tripFocusGo = true;
     // on attend les contours détaillés (une seconde au plus) avant de zoomer
-    Promise.race([ensureDetail(d.id), new Promise(r => setTimeout(r, 1200))]).then(() => { if (tripFocus === d.id && $("trip-map")) drawTripMap(p); });
+    Promise.race([ensureDetail(d.id), new Promise(r => setTimeout(r, 1200))]).then(() => { if (tripFocus === d.id && $("trip-map")) drawTripMap(p0); });
   });
   const hint = document.querySelector(".tm-hint");
   if (hint) hint.textContent = tripFocus ? "Touche une région, une ville ou un site ◆ pour l'ajouter" : "Touche un pays pour l'ouvrir, ou une ville";
@@ -1633,7 +1671,8 @@ function drawTripMap(p) {
   });
   const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, i: ids[j], name: placeName(p.stops[ids[j]]) })))
     .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; })
-    .on("click", (e, d) => { e.stopPropagation(); stopMenu(p, d.i); });
+    .classed("pending", d => pend && d.i === p0.stops.length)
+    .on("click", (e, d) => { e.stopPropagation(); if (d.i < p0.stops.length) stopMenu(p0, d.i); });
   marks.select(".num").text(d => d.n);
   marks.select(".lbl").text(d => d.name.length > 18 ? d.name.slice(0, 17) + "…" : d.name);
   const place2 = kk => {
@@ -1653,7 +1692,7 @@ function drawTripMap(p) {
   svgT.call(zoomT.transform, cam.t);
   drawCities(cam.t);
   // toucher la mer referme le pays ouvert
-  svgT.on("click", () => { if (tripFocus) { tripFocus = null; drawTripMap(p); } });
+  svgT.on("click", () => { if (tripFocus) { tripFocus = null; drawTripMap(p0); } });
   if (tripFocusGo && tripFocus && byId.get(tripFocus)) {
     tripFocusGo = false;
     const t = fitT(path.bounds(mainParts(byId.get(tripFocus))), 600);
