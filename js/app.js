@@ -52,7 +52,7 @@ let iso2 = {};
 // drapeau emoji à partir du code ISO à 2 lettres
 const flag = code => iso2[code] ? [...iso2[code]].map(ch => String.fromCodePoint(0x1F1A5 + ch.charCodeAt(0))).join("") : "";
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
-let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [] };
+let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [], f: [] };
 // Couleurs de la carte : chaque pays visité a sa couleur (choisie, sinon attribuée), ou tout en or
 const PALETTE = ["#f5b83d", "#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
 const cleanColors = o => Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([k, v]) => /^[A-Z0-9-]{2,8}$/.test(k) && PALETTE.includes(v)));
@@ -75,6 +75,9 @@ const MOODS = ["😍", "😀", "😌", "🤩", "😴", "🥵", "🥶", "🍽️"
 // Photos accrochées sur la carte : { id, ph (photo sur l'appareil), lon, lat, d (jour de la photo) }
 const cleanPins = l => (Array.isArray(l) ? l : []).filter(x => x && x.ph && isFinite(x.lon) && isFinite(x.lat)).slice(0, 3000)
   .map(x => ({ id: String(x.id || x.ph).slice(0, 24), ph: String(x.ph).slice(0, 24), lon: +(+x.lon).toFixed(5), lat: +(+x.lat).toFixed(5), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "" }));
+// Mes vols : { id, a: { n, lon, lat, c }, b: {…}, d }
+const cleanEnd = e => e && e.n && isFinite(e.lon) && isFinite(e.lat) ? { n: String(e.n).slice(0, 60), lon: +(+e.lon).toFixed(3), lat: +(+e.lat).toFixed(3), c: String(e.c || "").slice(0, 8) } : null;
+const cleanFlights = l => (Array.isArray(l) ? l : []).slice(0, 2000).map((x, i) => ({ id: String(x.id || "f" + i).slice(0, 20), a: cleanEnd(x.a), b: cleanEnd(x.b), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "" })).filter(x => x.a && x.b);
 function cleanJournal(o) {
   const out = {};
   for (const [c, v] of Object.entries(o && typeof o === "object" ? o : {})) {
@@ -103,7 +106,6 @@ const REAL = (() => { try { return localStorage.getItem("explora-mapstyle") !== 
 let current = null, selected = null, tab = "map", tripView = "visited";
 let routePlan = null; // projet affiché sur la carte
 let quick = false;
-let sheetMore = false; // panneau du pays déplié
 let sheetMonth = ""; // mois choisi avant de marquer le pays
 let askRegions = null; // pays tout juste marqué : on propose d'en choisir les régions
 let me = null, watchId = null;
@@ -139,15 +141,15 @@ function cleanPlans(list) {
   });
 }
 function serialize() {
-  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, p: state.p, t: Date.now() };
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, p: state.p, f: state.f, t: Date.now() };
 }
 let VIEW = null; // carte d'un ami ouverte par un lien : rien n'est enregistré
 function save() { if (!VIEW) store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
-  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j), p: cleanPins(d.p) };
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j), p: cleanPins(d.p), f: cleanFlights(d.f) };
 } catch (e) {}
-quick = store.get("explora-quick") === "1";
+// le marquage rapide a été retiré du panneau : toucher une région la sélectionne toujours
 // les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
 // (une date choisie par l'utilisateur tombe toujours pile à midi)
 if (!store.get("explora-dates-v2")) {
@@ -216,7 +218,7 @@ async function load() {
   const shared = location.hash.startsWith("#carte=") ? await unpackMap(location.hash.slice(7)).catch(() => null) : null;
   if (shared) {
     VIEW = shared;
-    state = { c: new Map(shared.c.map(c => [c, 0])), r: new Map(shared.r.map(r => [r, 0])), w: new Map(), u: new Map(), plans: [], k: shared.k, j: {}, p: [] };
+    state = { c: new Map(shared.c.map(c => [c, 0])), r: new Map(shared.r.map(r => [r, 0])), w: new Map(), u: new Map(), plans: [], k: shared.k, j: {}, p: [], f: shared.f || [] };
   }
   migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
@@ -396,6 +398,7 @@ const gDetail = root.append("g").attr("class", "detail");
 const gOutline = root.append("g");
 const gSel = root.append("g");
 const gRoute = root.append("g");
+const gFlights = root.append("g").attr("class", "flights");
 const gSites = root.append("g");
 const gCities = root.append("g");
 const gPins = root.append("g").attr("class", "pins");
@@ -414,6 +417,7 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   gCities.selectAll(".city").attr("transform", cityTransform);
   gSites.selectAll(".site").attr("transform", siteTransform);
   gPins.selectAll(".pin-g").attr("transform", pinTransform);
+  gFlights.selectAll(".fl-end").attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / k})`);
   gOutline.selectAll(".nation-name").attr("transform", d => { const [x, y] = path.centroid(d.shape); return `translate(${x},${y}) scale(${1 / k})`; });
   gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
@@ -521,6 +525,7 @@ function drawMap() {
     .order().raise();
   gSites.selectAll(".wonder").raise();
   drawRoute();
+  drawFlights();
   drawPins();
 }
 
@@ -743,7 +748,7 @@ function homeTransform() {
 const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
 
 function openCountry(code, regionId = null, focus = false) {
-  if (code !== current) { sheetMore = false; colorOpen = false; selSite = null; sheetMonth = ""; }
+  if (code !== current) { colorOpen = false; selSite = null; sheetMonth = ""; }
   current = code;
   selected = regionId;
   routePlan = null;
@@ -998,7 +1003,7 @@ function renderSheet() {
     const selOn = sel && state.r.has(sel.id), selWish = sel && state.w.has(sel.id);
     const one = SINGULAR[f.kind] || "endroit", fem = FEMININE.has(f.kind);
     const un = (fem ? "une " : "un ") + one, le = fem ? "la" : "le";
-    // panneau compact par défaut pour laisser la carte visible ; « ⌃ » déplie la date, les envies et le marquage rapide
+    // panneau compact : émoticônes ✅ / ⭐ en un appui, date facultative juste en dessous
     sheet.innerHTML = `
       <div class="row cmp">
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
@@ -1007,7 +1012,6 @@ function renderSheet() {
         ${been ? "" : `<button class="qk wish ${wish ? "on" : ""}" id="s-wish" aria-pressed="${wish}" aria-label="Envie d'y aller"><span>⭐</span><small>Envie</small></button>`}
         ${been || v ? `<button class="kdot" id="s-color" style="--c:${countryColor(current)}" aria-expanded="${colorOpen}" aria-label="Changer la couleur du pays"></button>` : ""}
         <button class="btn small more jr-btn" id="s-journal" aria-label="Photos et journal de voyage">📖${state.j[current]?.entries.length ? `<i>${state.j[current].entries.length}</i>` : ""}</button>
-        <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
       ${current === "GBR" ? `<div class="nations">${["ENG", "SCT", "WLS", "NIR"].map(k => { const rs = (regionsBy.get("GBR") || []).filter(r => nationOf(r.id) === k), vv = rs.filter(r => state.r.has(r.id)).length;
@@ -1028,12 +1032,7 @@ function renderSheet() {
         <div class="name"><b>Quel${fem ? "les" : "s"} ${esc(f.kind)} ?</b><small>Touche sur la carte ${fem ? "celles" : "ceux"} où tu es allé.</small></div>
         <button class="btn small" id="s-later">Plus tard</button>
       </div>` : ""}
-      ${sheetMore ? `
-      <div class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>
-      ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
-      ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
-      ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
-      <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
+      <div class="when sm">${been ? "Date de visite" : "Quand ?"} <small>(facultatif)</small> ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>`;
     $("s-back").onclick = openWorld;
     sheet.querySelectorAll("[data-nation]").forEach(b => b.onclick = () => zoomNation(b.dataset.nation));
     $("s-journal").onclick = () => journalSheet(current);
@@ -1053,7 +1052,6 @@ function renderSheet() {
     };
     if ($("s-later")) $("s-later").onclick = () => { askRegions = null; renderSheet(); };
     if ($("s-unbeen")) $("s-unbeen").onclick = () => { if (confirm(`Retirer ${f.properties.n} et toutes ses régions de ta carte ?`)) { setCountry(current, false); update(); } };
-    $("s-more").onclick = () => { sheetMore = !sheetMore; renderSheet(); };
     if ($("s-date")) $("s-date").onclick = async () => {
       const v = await pickMonth($("s-date").dataset.v, been ? "Date de visite" : "Quand ?");
       if (v === null) return;
@@ -1072,7 +1070,6 @@ function renderSheet() {
       update();
     };
     if ($("s-swish")) $("s-swish").onclick = () => { toggleWish(sel.id); update(); };
-    if ($("s-quick")) $("s-quick").onchange = e => { quick = e.target.checked; store.set("explora-quick", quick ? "1" : "0"); renderSheet(); };
   } else if (plan) {
     sheet.innerHTML = `
       <div class="row"><h2 class="grow">${esc(plan.name)}</h2><button class="btn small" id="s-close">Fermer</button></div>
@@ -1596,12 +1593,90 @@ function pinViewer(items, start = 0) {
 }
 $("btn-photos").onclick = () => { if (!pinsShown()) { store.set("explora-pins", "on"); drawPins(); } pickPinPhotos(); };
 
+/* ---------- Mes vols : départs et arrivées reliés sur la carte ---------- */
+const flightsShown = () => store.get("explora-flights") !== "off";
+const flKm = f => d3.geoDistance([f.a.lon, f.a.lat], [f.b.lon, f.b.lat]) * 6371;
+function drawFlights() {
+  const list = flightsShown() && !routePlan ? state.f : [];
+  gFlights.selectAll(".fl-arc").data(list, d => d.id).join("path").attr("class", "fl-arc")
+    .attr("d", d => path({ type: "LineString", coordinates: [[d.a.lon, d.a.lat], [d.b.lon, d.b.lat]] }));
+  // chaque ville une seule fois ; plus le point est gros, plus on y est passé souvent
+  const ends = new Map();
+  for (const f of list) for (const e of [f.a, f.b]) {
+    const key = e.n + "|" + e.c, o = ends.get(key) || { ...e, key, n2: 0 };
+    o.n2++; ends.set(key, o);
+  }
+  const pts = [...ends.values()].map(e => { const [x, y] = projection([e.lon, e.lat]); return { ...e, x, y }; });
+  gFlights.selectAll(".fl-end").data(pts, d => d.key).join(enter => {
+    const g = enter.append("g").attr("class", "fl-end");
+    g.append("circle"); g.append("text").attr("x", 7).attr("dy", "0.35em");
+    return g;
+  }).attr("transform", d => `translate(${d.x},${d.y}) scale(${1 / k})`)
+    .call(g => g.select("circle").attr("r", d => Math.min(7, 3 + d.n2 * .6)))
+    .call(g => g.select("text").text(d => d.n));
+}
+let flDraft = { a: null, b: null, d: "" };
+function endFromHit(c, r, h) {
+  if (h?.city) return { n: h.city.n, lon: h.city.lon, lat: h.city.lat, c: h.city.code };
+  const id = r || c, [lon, lat] = centroid(id);
+  return { n: placeName(id), lon, lat, c };
+}
+function renderFlights(box) {
+  const list = [...state.f].sort((x, y) => (y.d || "").localeCompare(x.d || ""));
+  const km = d3.sum(state.f, flKm), cities = new Set(state.f.flatMap(f => [f.a.n + f.a.c, f.b.n + f.b.c])).size;
+  const longest = d3.greatest(state.f, flKm);
+  box.innerHTML = `
+    ${state.f.length ? `<div class="fl-stats">
+      <span><b>${state.f.length}</b><small>vol${state.f.length > 1 ? "s" : ""}</small></span>
+      <span><b>${Math.round(km).toLocaleString("fr-FR")}</b><small>km en avion</small></span>
+      <span><b>${(km / 40075).toLocaleString("fr-FR", { maximumFractionDigits: 1 })}</b><small>tours de la Terre</small></span>
+      <span><b>${cities}</b><small>villes</small></span>
+    </div>` : ""}
+    <div class="fl-form block">
+      <h3 style="margin-top:0">✈️ Ajouter un vol</h3>
+      <div class="add"><input id="fl-a" type="search" autocomplete="off" placeholder="Départ : ville ou pays…" value="${esc(flDraft.a?.n || "")}"><ul id="fl-ar" class="card results" hidden></ul></div>
+      <div class="add" style="margin-top:8px"><input id="fl-b" type="search" autocomplete="off" placeholder="Arrivée : ville ou pays…" value="${esc(flDraft.b?.n || "")}"><ul id="fl-br" class="card results" hidden></ul></div>
+      <div class="btns"><button type="button" class="date-btn ${flDraft.d ? "" : "empty"}" id="fl-d">📅 ${flDraft.d ? esc(fmtDate(flDraft.d)) : "Date (facultatif)"}</button>
+        <button class="btn primary" id="fl-add" ${flDraft.a && flDraft.b ? "" : "disabled"}>Ajouter</button></div>
+    </div>
+    ${list.length ? `<div class="block">
+      <div class="row between"><h3 style="margin:0">Mes vols</h3><button class="btn small" id="fl-map">Voir sur la carte</button></div>
+      <label class="switch" style="margin:10px 0 4px"><input type="checkbox" id="fl-on" ${flightsShown() ? "checked" : ""}>Afficher mes vols sur la carte</label>
+      <ul class="fl-list">${list.map(f => `<li>
+        <span class="t"><b>${esc(f.a.n)} → ${esc(f.b.n)}</b><small>${[f.d && esc(fmtDate(f.d)), fmtKm(flKm(f))].filter(Boolean).join(" · ")}${longest === f && state.f.length > 1 ? " · 🏆 le plus long" : ""}</small></span>
+        <button class="icon-btn" data-rmfl="${f.id}" aria-label="Retirer ce vol">✕</button></li>`).join("")}</ul>
+    </div>` : `<p class="small" style="text-align:center">Ajoute tes vols : ils se dessinent sur la carte, reliés comme une toile d'araignée.</p>`}`;
+  const pick = key => (c, r, city, site, h) => { flDraft[key] = endFromHit(c, r, h); renderFlights(box); };
+  bindSearch($("fl-a"), $("fl-ar"), true, h => h.k, pick("a"));
+  bindSearch($("fl-b"), $("fl-br"), true, h => h.k, pick("b"));
+  for (const key of ["a", "b"]) $("fl-" + key).addEventListener("input", () => { if (flDraft[key]) { flDraft[key] = null; $("fl-add").disabled = true; } });
+  $("fl-d").onclick = async () => { const r = await pickDates(flDraft.d, "", false, 0, true); if (r && r.start) { flDraft.d = r.start; renderFlights(box); } };
+  $("fl-add").onclick = () => {
+    if (!flDraft.a || !flDraft.b) return;
+    state.f.push({ id: "f" + Date.now().toString(36), a: flDraft.a, b: flDraft.b, d: flDraft.d });
+    // retour possible : le départ suivant part de l'arrivée
+    flDraft = { a: flDraft.b, b: null, d: "" };
+    save(); drawFlights(); renderFlights(box);
+    toast("Vol ajouté ✈️", 1200);
+  };
+  box.querySelectorAll("[data-rmfl]").forEach(b => b.onclick = () => { state.f = state.f.filter(f => f.id !== b.dataset.rmfl); save(); drawFlights(); renderFlights(box); });
+  if ($("fl-on")) $("fl-on").onchange = e => { store.set("explora-flights", e.target.checked ? "on" : "off"); drawFlights(); };
+  if ($("fl-map")) $("fl-map").onclick = () => {
+    store.set("explora-flights", "on");
+    showTab("map"); openWorld();
+    setTimeout(() => {
+      const P = state.f.flatMap(f => [projection([f.a.lon, f.a.lat]), projection([f.b.lon, f.b.lat])]);
+      fitBounds([[d3.min(P, d => d[0]) - 20, d3.min(P, d => d[1]) - 20], [d3.max(P, d => d[0]) + 20, d3.max(P, d => d[1]) + 20]], 800);
+    }, 60);
+  };
+}
+
 /* ---------- Carte à partager (lien) ---------- */
 // Le lien contient la carte elle-même (pays, régions, couleurs), compressée : pas de compte ni de serveur.
 const b64url = bytes => { let bin = ""; bytes.forEach(b => bin += String.fromCharCode(b)); return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
 const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
 async function packMap(name) {
-  const bytes = new TextEncoder().encode(JSON.stringify({ n: name, c: [...state.c.keys()], r: [...state.r.keys()], k: state.k }));
+  const bytes = new TextEncoder().encode(JSON.stringify({ n: name, c: [...state.c.keys()], r: [...state.r.keys()], k: state.k, f: state.f.map(({ id, ...x }) => x) }));
   if (window.CompressionStream) try { return "z" + b64url(await pipeBytes(bytes, new CompressionStream("deflate-raw"))); } catch (e) {}
   return "u" + b64url(bytes);
 }
@@ -1609,7 +1684,7 @@ async function unpackMap(s) {
   const bytes = Uint8Array.from(atob(s.slice(1).replace(/-/g, "+").replace(/_/g, "/")), ch => ch.charCodeAt(0));
   const raw = s[0] === "z" ? await pipeBytes(bytes, new DecompressionStream("deflate-raw")) : bytes;
   const d = JSON.parse(new TextDecoder().decode(raw));
-  return { n: String(d.n || "").slice(0, 40), c: (Array.isArray(d.c) ? d.c : []).map(String).slice(0, 400), r: (Array.isArray(d.r) ? d.r : []).map(String).slice(0, 6000), k: cleanColors(d.k) };
+  return { f: cleanFlights(d.f), n: String(d.n || "").slice(0, 40), c: (Array.isArray(d.c) ? d.c : []).map(String).slice(0, 400), r: (Array.isArray(d.r) ? d.r : []).map(String).slice(0, 6000), k: cleanColors(d.k) };
 }
 function shareLink() {
   const back = document.createElement("div");
@@ -1761,8 +1836,9 @@ function bindTrip(el) {
 function renderTrips() {
   document.querySelectorAll("[data-tv]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tv === tripView));
   $("add-q").placeholder = tripView === "wish" ? "Ajouter une envie (pays ou région)…" : "Ajouter un pays visité…";
-  $("add-q").closest(".add").hidden = tripView === "timeline";
+  $("add-q").closest(".add").hidden = tripView === "timeline" || tripView === "flights";
   const box = $("trips");
+  if (tripView === "flights") return renderFlights(box);
   if (tripView === "visited") {
     const list = [...state.c.keys()].map(id => byId.get(id)).filter(Boolean)
       .sort((a, b) => a.properties.n.localeCompare(b.properties.n, "fr"));
@@ -2617,6 +2693,8 @@ $("import-file").onchange = async e => {
     for (const [id, t] of toMap(d.u)) if (siteById.has(id) && !state.u.has(id)) state.u.set(id, t);
     for (const p of cleanPlans(d.plans)) if (!state.plans.some(x => x.id === p.id)) state.plans.push(p);
     state.k = { ...cleanColors(d.k), ...state.k };
+    for (const fl of cleanFlights(d.f)) if (!state.f.some(x => x.id === fl.id)) state.f.push(fl);
+    for (const pn of cleanPins(d.p)) if (!state.p.some(x => x.id === pn.id)) state.p.push(pn);
     for (const [c, jj] of Object.entries(cleanJournal(d.j))) if (!state.j[c]) state.j[c] = jj;
     save(); update();
     toast(`Sauvegarde importée : ${added} nouveau${added > 1 ? "x" : ""} pays`);
@@ -2625,7 +2703,7 @@ $("import-file").onchange = async e => {
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
   if (b.dataset.armed) {
-    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [] }; save();
+    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [], f: [] }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
     update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;
