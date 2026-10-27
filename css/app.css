@@ -609,3 +609,6 @@ body.viewing #s-been, body.viewing #s-mark, body.viewing #s-site, body.viewing #
 .pv-bar > div { flex: 1; min-width: 0; display: grid; }
 .pv-bar small { color: #bbb; }
 .pv-bar .icon-btn { color: #fff; }
+.kdot { flex: none; width: 34px; height: 34px; border-radius: 50%; padding: 0; cursor: pointer; background: var(--c, var(--found)); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--c, var(--found)), var(--shadow); position: relative; }
+.kdot::after { content: "🎨"; position: absolute; right: -7px; bottom: -7px; font-size: 13px; }
+.kdot[aria-expanded="true"] { transform: scale(1.1); }

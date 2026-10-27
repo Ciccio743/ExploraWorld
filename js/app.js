@@ -696,7 +696,7 @@ function homeTransform() {
 const goHome = (dur = 0) => svg.interrupt().transition().duration(reduceMotion() ? 0 : dur).ease(d3.easeCubicOut).call(zoom.transform, homeTransform());
 
 function openCountry(code, regionId = null, focus = false) {
-  if (code !== current) { sheetMore = false; selSite = null; sheetMonth = ""; }
+  if (code !== current) { sheetMore = false; colorOpen = false; selSite = null; sheetMonth = ""; }
   current = code;
   selected = regionId;
   routePlan = null;
@@ -941,6 +941,7 @@ function update() {
   if (tab === "plans") renderPlans();
 }
 
+let colorOpen = false; // palette de couleurs ouverte dans la fiche du pays
 function renderSheet() {
   const sheet = $("sheet");
   const plan = routePlan && state.plans.find(p => p.id === routePlan);
@@ -956,10 +957,12 @@ function renderSheet() {
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
         <div class="cname grow"><b>${flag(current)} ${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
         ${n > 1 && (been || sel) ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
+        ${been || v ? `<button class="kdot" id="s-color" style="--c:${countryColor(current)}" aria-expanded="${colorOpen}" aria-label="Changer la couleur du pays"></button>` : ""}
         <button class="btn small more jr-btn" id="s-journal" aria-label="Photos et journal de voyage">📖${state.j[current]?.entries.length ? `<i>${state.j[current].entries.length}</i>` : ""}</button>
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
+      ${colorOpen && (been || v) ? `<div class="kcolors"><span>Choisis sa couleur sur ta carte</span><div class="swatches">${PALETTE.map(c => `<button type="button" class="swatch" data-kc="${c}" style="--c:${c}" aria-label="Couleur ${c}" aria-pressed="${countryColor(current) === c}"></button>`).join("")}</div></div>` : ""}
       ${site ? `
       <div class="pick">
         <div class="name"><b>${esc(site.n)}</b><small>${site.wonder ? (site.hon ? "Merveille honoraire du monde" : "Une des 7 merveilles du monde") : `Patrimoine mondial · ${CAT_IC[site.cat]} ${CAT[site.cat]} · ${site.year}`}${state.u.has(site.id) ? " · visité" : ""}</small></div>
@@ -977,7 +980,6 @@ function renderSheet() {
       </div>` : ""}
       ${sheetMore ? `
       <div class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>
-      ${been || v ? `<div class="kcolors"><span>Couleur sur la carte</span><div class="swatches">${PALETTE.map(c => `<button type="button" class="swatch" data-kc="${c}" style="--c:${c}" aria-label="Couleur ${c}" aria-pressed="${countryColor(current) === c}"></button>`).join("")}</div></div>` : ""}
       ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
       ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
@@ -985,7 +987,8 @@ function renderSheet() {
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
     $("s-journal").onclick = () => journalSheet(current);
-    sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; save(); update(); });
+    sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; colorOpen = false; save(); update(); });
+    if ($("s-color")) $("s-color").onclick = () => { colorOpen = !colorOpen; renderSheet(); };
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
     if ($("s-been")) $("s-been").onclick = () => {
       setCountry(current, !been, $("s-date") ? monthTs($("s-date").dataset.v) : 0);
