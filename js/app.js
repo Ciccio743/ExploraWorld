@@ -88,6 +88,15 @@ function cleanJournal(o) {
   return out;
 }
 const countryColor = code => state.k[code] || autoColor.get(code) || null;
+// variantes claire et foncée calculées ici (plus sûr que color-mix sur les anciens iPhone)
+let fogNow = "";
+function setColorVars(el, code) {
+  const c = countryColor(code);
+  if (!c) { el.style.removeProperty("--c"); el.style.removeProperty("--cs"); el.style.removeProperty("--cd"); return; }
+  el.style.setProperty("--c", c);
+  el.style.setProperty("--cs", d3.interpolateRgb(fogNow || "#eef1ef", c)(.55));
+  el.style.setProperty("--cd", d3.interpolateRgb(c, "#000")(.4));
+}
 // style de carte : « classic » (dessinée) ou « real » (satellite avec les reliefs)
 const REAL = (() => { try { return localStorage.getItem("explora-mapstyle") === "real"; } catch (e) { return false; } })();
 let current = null, selected = null, tab = "map", tripView = "visited";
@@ -466,24 +475,25 @@ function drawBase() {
 }
 
 function drawMap() {
+  fogNow = getComputedStyle(document.documentElement).getPropertyValue("--fog").trim();
   // autour du pays ouvert, les voisins sont dessinés avec leurs contours détaillés : frontières jointives
   const near = new Set(current ? (neighbors.get(current) || []).filter(detailOf) : []);
   gBase.selectAll(".country")
     .classed("visited", d => state.c.has(d.id))
     .classed("wish", d => !state.c.has(d.id) && state.w.has(d.id))
     .classed("active", d => d.id === current || near.has(d.id))
-    .style("--c", d => countryColor(d.id));
+    .each(function (d) { setColorVars(this, d.id); });
   gNear.selectAll(".region").data([...near].flatMap(c => detailOf(c).regions), d => d.id).join(
     enter => enter.append("path").attr("d", path).on("click", (e, d) => { e.stopPropagation(); openCountry(d.code); })
   ).attr("class", d => "region " + (state.r.has(d.id) ? "visited" : state.c.has(d.code) ? "in-visited" : state.w.has(d.id) || state.w.has(d.code) ? "wish" : ""))
-    .style("--c", d => countryColor(d.code));
+    .each(function (d) { setColorVars(this, d.code); });
   gNear.selectAll(".near-line").data([...near].map(c => detailOf(c).outline)).join("path").attr("class", "near-line").attr("d", path);
   const marked = new Set([...state.r.keys(), ...[...state.w.keys()].filter(id => regionById.has(id))]);
   const others = [...marked].map(id => regionById.get(id)).filter(r => r && r.code !== current && !near.has(r.code));
   gOverlay.selectAll(".region").data(others, d => d.id)
     .join(enter => enter.append("path").attr("d", path))
     .attr("class", d => "region " + (state.r.has(d.id) ? "visited" : "wish"))
-    .style("--c", d => countryColor(d.code));
+    .each(function (d) { setColorVars(this, d.code); });
   const det = current && detailOf(current);
   gDetail.selectAll(".region").data(current ? (det ? det.regions : regionsBy.get(current) || []) : [], d => d.id + (d.detail ? "+" : "")).join(
     enter => enter.append("path").attr("class", "region").attr("d", path)
@@ -491,7 +501,7 @@ function drawMap() {
       .on("pointermove", (e, d) => showTip(e, d.properties.n))
       .on("pointerleave", () => tip.hidden = true)
   ).classed("visited", d => state.r.has(d.id)).classed("wish", d => !state.r.has(d.id) && state.w.has(d.id))
-    .style("--c", countryColor(current));
+    .each(function () { setColorVars(this, current); });
   gOutline.selectAll("path").data(current ? [det ? det.outline : byId.get(current)] : []).join("path").attr("class", "outline").attr("d", path);
   // Royaume-Uni ouvert : frontières des nations bien marquées, et leur nom
   const uk = current === "GBR" ? (det && det.nations) || ukWorld : null;
@@ -992,7 +1002,8 @@ function renderSheet() {
       <div class="row cmp">
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
         <div class="cname grow"><b>${flag(current)} ${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
-        ${n > 1 && (been || sel) ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
+        <button class="qk ${been ? "on" : ""}" id="s-been" aria-pressed="${been}" aria-label="${been ? "Visité (toucher pour retirer)" : "Marquer visité"}"><span>✅</span><small>Visité</small></button>
+        ${been ? "" : `<button class="qk wish ${wish ? "on" : ""}" id="s-wish" aria-pressed="${wish}" aria-label="Envie d'y aller"><span>⭐</span><small>Envie</small></button>`}
         ${been || v ? `<button class="kdot" id="s-color" style="--c:${countryColor(current)}" aria-expanded="${colorOpen}" aria-label="Changer la couleur du pays"></button>` : ""}
         <button class="btn small more jr-btn" id="s-journal" aria-label="Photos et journal de voyage">📖${state.j[current]?.entries.length ? `<i>${state.j[current].entries.length}</i>` : ""}</button>
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
@@ -1019,7 +1030,6 @@ function renderSheet() {
       ${sheetMore ? `
       <div class="when" style="margin-top:12px">${been ? "Date de visite" : "Quand ?"} (facultatif) ${monthBtn('id="s-date"', been ? monthValue(state.c.get(current)) : sheetMonth)}</div>
       ${been && n > 1 ? `<div class="btns"><button class="btn small danger" id="s-unbeen">Retirer ce pays de ma carte</button></div>` : ""}
-      ${!been ? `<div class="btns"><button class="btn small wishbtn" id="s-wish" aria-pressed="${wish}">${wish ? "★ Dans mes envies" : "☆ J'ai envie d'y aller"}</button></div>` : ""}
       ${sel ? "" : `<p class="hint">${quick ? `Touche ${esc(un)} pour ${le} marquer ou ${le} retirer.` : `Touche ${esc(un)} pour ${le} sélectionner.`}</p>`}
       ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
@@ -1029,7 +1039,12 @@ function renderSheet() {
     sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; colorOpen = false; save(); update(); });
     if ($("s-color")) $("s-color").onclick = () => { colorOpen = !colorOpen; renderSheet(); };
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
-    if ($("s-been")) $("s-been").onclick = () => {
+    if ($("s-been")) $("s-been").onclick = e => {
+      // retirer un pays dont des régions sont cochées : un second toucher confirme
+      if (been && v) {
+        const b = e.currentTarget;
+        if (!b.dataset.armed) { b.dataset.armed = "1"; b.classList.add("armed"); toast(`Touche encore ✅ pour retirer ${f.properties.n} et ses ${v} ${f.kind}`, 2200); setTimeout(() => { delete b.dataset.armed; b.classList.remove("armed"); }, 2500); return; }
+      }
       setCountry(current, !been, $("s-date") ? monthTs($("s-date").dataset.v) : 0);
       // une fois le pays marqué, on propose de préciser les régions
       askRegions = !been && n > 1 ? current : null;
@@ -1044,7 +1059,7 @@ function renderSheet() {
       if (been) setVisitMonth(current, v); else sheetMonth = v;
       renderSheet();
     };
-    if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); };
+    if ($("s-wish")) $("s-wish").onclick = () => { toggleWish(current); update(); toast(state.w.has(current) ? `⭐ ${f.properties.n} ajouté à tes envies` : "Retiré de tes envies", 1400); };
     if (site) {
       $("s-site").onclick = () => { toggleSite(site.id); update(); };
       showPhoto(site);
