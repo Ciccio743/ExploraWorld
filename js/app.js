@@ -74,7 +74,7 @@ const nationOf = id => String(id).startsWith("GBR-") ? nationOfId.get(id) || "EN
 const MOODS = ["😍", "😀", "😌", "🤩", "😴", "🥵", "🥶", "🍽️", "🏖️", "🏔️", "🚶", "🎉"];
 // Photos accrochées sur la carte : { id, ph (photo sur l'appareil), lon, lat, d (jour de la photo) }
 const cleanPins = l => (Array.isArray(l) ? l : []).filter(x => x && x.ph && isFinite(x.lon) && isFinite(x.lat)).slice(0, 3000)
-  .map(x => ({ id: String(x.id || x.ph).slice(0, 24), ph: String(x.ph).slice(0, 24), lon: +(+x.lon).toFixed(5), lat: +(+x.lat).toFixed(5), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "" }));
+  .map(x => ({ id: String(x.id || x.ph).slice(0, 24), ph: String(x.ph).slice(0, 24), lon: +(+x.lon).toFixed(5), lat: +(+x.lat).toFixed(5), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "", ...(/^[A-Z0-9]{3}$/.test(x.c) ? { c: x.c } : {}) }));
 // Mes vols : { id, a: { n, lon, lat, c }, b: {…}, d }
 const cleanEnd = e => e && e.n && isFinite(e.lon) && isFinite(e.lat) ? { n: String(e.n).slice(0, 60), lon: +(+e.lon).toFixed(3), lat: +(+e.lat).toFixed(3), c: String(e.c || "").slice(0, 8) } : null;
 const cleanFlights = l => (Array.isArray(l) ? l : []).slice(0, 2000).map((x, i) => ({ id: String(x.id || "f" + i).slice(0, 20), a: cleanEnd(x.a), b: cleanEnd(x.b), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "" })).filter(x => x.a && x.b);
@@ -1011,6 +1011,7 @@ function renderSheet() {
         <button class="qk ${been ? "on" : ""}" id="s-been" aria-pressed="${been}" aria-label="${been ? "Visité (toucher pour retirer)" : "Marquer visité"}"><span>✅</span><small>Visité</small></button>
         ${been ? "" : `<button class="qk wish ${wish ? "on" : ""}" id="s-wish" aria-pressed="${wish}" aria-label="Envie d'y aller"><span>⭐</span><small>Envie</small></button>`}
         ${been || v ? `<button class="kdot" id="s-color" style="--c:${countryColor(current)}" aria-expanded="${colorOpen}" aria-label="Changer la couleur du pays"></button>` : ""}
+        <button class="btn small more" id="s-addph" aria-label="Ajouter des photos sur la carte">📷</button>
         <button class="btn small more jr-btn" id="s-journal" aria-label="Photos et journal de voyage">📖${state.j[current]?.entries.length ? `<i>${state.j[current].entries.length}</i>` : ""}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
@@ -1036,6 +1037,7 @@ function renderSheet() {
     $("s-back").onclick = openWorld;
     sheet.querySelectorAll("[data-nation]").forEach(b => b.onclick = () => zoomNation(b.dataset.nation));
     $("s-journal").onclick = () => journalSheet(current);
+    $("s-addph").onclick = addMapPhotos;
     sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; colorOpen = false; save(); update(); });
     if ($("s-color")) $("s-color").onclick = () => { colorOpen = !colorOpen; renderSheet(); };
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
@@ -1306,6 +1308,35 @@ function fillPhotos(box) {
   box.querySelectorAll("img[data-ph]").forEach(async img => { const u = await photoURL(img.dataset.ph); if (u) img.src = u; else img.remove(); });
 }
 const journalOf = code => state.j[code] || { cover: "", entries: [] };
+// souvenirs et photos de la carte, c'est la même chose : chaque photo d'un souvenir est aussi posée sur la carte
+function pinJournalPhotos(code, phs, loc, day) {
+  const have = new Set(state.p.map(p => p.ph)), add = [];
+  for (const ph of phs) {
+    if (have.has(ph)) continue;
+    const at = loc?.[ph];
+    let lon, lat;
+    if (at) ({ lon, lat } = at);
+    else {
+      const r = selected && regionById.get(selected), spot = r && placeCountry(selected) === code ? r : byId.get(code).main;
+      [lon, lat] = d3.geoCentroid(spot);
+    }
+    add.push({ id: ph, ph, lon, lat, d: at?.d || day || "", c: code });
+  }
+  if (add.length) { state.p.push(...cleanPins(add)); drawPins(); }
+  return add.length > 0;
+}
+// retirer une photo l'enlève partout : carte, souvenirs et téléphone
+function unpinPhotos(phs) {
+  if (!phs.length) return;
+  const gone = new Set(phs);
+  state.p = state.p.filter(p => !gone.has(p.ph));
+  for (const j of Object.values(state.j)) {
+    for (const e of j.entries) e.ph = e.ph.filter(x => !gone.has(x));
+    if (gone.has(j.cover)) j.cover = "";
+  }
+  dropPhotos(phs);
+  drawPins();
+}
 function journalSheet(code) {
   document.querySelector(".ss-back")?.remove();
   const f = byId.get(code), name = f.properties.n;
@@ -1320,6 +1351,7 @@ function journalSheet(code) {
     save();
   };
   const close = () => { if (edit) dropPhotos(edit.added || []); back.remove(); update(); };
+  if (journalOf(code).entries.some(e => pinJournalPhotos(code, e.ph, null, e.d))) { save(); drawPins(); }
   const draw = () => {
     const j = journalOf(code);
     const mine = j.entries.flatMap(e => e.ph);
@@ -1341,7 +1373,7 @@ function journalSheet(code) {
           <span><b>${j.entries.length}</b><small>${j.entries.length > 1 ? "souvenirs" : "souvenir"}</small></span>
           <span><b>${allPh.length}</b><small>photo${allPh.length > 1 ? "s" : ""}</small></span>
         </div>
-        ${onMap.length && !edit ? `<div class="jr-map"><small>📷 Mes photos dans ce pays</small><div class="jr-strip">${onMap.map((p, i) => `<button type="button" data-mapph="${i}"><img data-ph="${p.ph}" alt=""></button>`).join("")}</div></div>` : ""}
+        ${onMap.length && !edit ? `<div class="jr-map"><small>📷 Toutes mes photos dans ce pays</small><div class="jr-strip">${onMap.map((p, i) => `<button type="button" data-mapph="${i}"><img data-ph="${p.ph}" alt=""></button>`).join("")}</div></div>` : ""}
         ${edit ? editor(edit) : `<button class="btn primary jr-new" data-j="new">＋ Écrire un souvenir</button>`}
         ${!edit && !list.length ? `<p class="small jr-empty">Raconte ton voyage : un moment fort, une adresse, une rencontre… avec tes photos. Tout reste sur ton téléphone.</p>` : ""}
         <div class="jr-list">${edit ? "" : list.map(e => `
@@ -1378,7 +1410,14 @@ function journalSheet(code) {
       const files = [...ev.target.files].slice(0, 30 - edit.ph.length);
       if (!files.length) return;
       toast("Ajout des photos…", 1200);
-      const ids = await addPhotos(files).catch(() => []);
+      const ids = [];
+      for (const f of files) {
+        const ex = readExif(await f.slice(0, 256 * 1024).arrayBuffer().catch(() => new ArrayBuffer(0)));
+        const [ph] = await addPhotos([f]).catch(() => []);
+        if (!ph) continue;
+        ids.push(ph);
+        if (ex.lat !== undefined) (edit.loc ||= {})[ph] = { lon: ex.lon, lat: ex.lat, d: ex.day || "" };
+      }
       if (!ids.length) { toast("Impossible d'ajouter ces photos"); return; }
       edit.ph.push(...ids); edit.added.push(...ids); draw();
     };
@@ -1389,7 +1428,8 @@ function journalSheet(code) {
       keepText();
       const j = journalOf(code), old = j.entries.find(x => x.id === edit.id);
       if (!edit.t.trim() && !edit.x.trim() && !edit.ph.length && !edit.e) { toast("Écris quelques mots ou ajoute une photo", 1600); return; }
-      if (old) dropPhotos(old.ph.filter(id => !edit.ph.includes(id)));
+      if (old) unpinPhotos(old.ph.filter(id => !edit.ph.includes(id)));
+      pinJournalPhotos(code, edit.ph, edit.loc, edit.d);
       const clean = { id: edit.id, d: edit.d, t: edit.t.trim(), x: edit.x.trim(), e: edit.e, ph: edit.ph };
       j.entries = old ? j.entries.map(x => x.id === edit.id ? clean : x) : [...j.entries, clean];
       state.j[code] = j; edit = null; persist(); draw();
@@ -1399,13 +1439,14 @@ function journalSheet(code) {
     if (del) del.onclick = () => {
       if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "Confirmer"; return; }
       const j = journalOf(code), old = j.entries.find(x => x.id === edit.id);
-      dropPhotos([...(old ? old.ph : []), ...edit.added]);
+      unpinPhotos([...(old ? old.ph : []), ...edit.added]);
       j.entries = j.entries.filter(x => x.id !== edit.id);
       if (old && old.ph.includes(j.cover)) j.cover = "";
       state.j[code] = j; edit = null; persist(); draw();
     };
   };
   back.onclick = e => { if (e.target === back && !edit) close(); };
+  back._draw = () => { if (!edit) draw(); }; // après un changement dans la galerie
   draw();
 }
 // photos Wikipédia du pays, quand le journal n'a pas encore de photo à soi
@@ -1518,7 +1559,7 @@ svg.node().addEventListener("click", e => {
     const t = d3.zoomTransform(svg.node()), [x, y] = d3.pointer(e, svg.node());
     const ll = projection.invert(t.invert([x, y]));
     if (!ll || !isFinite(ll[0])) return;
-    state.p.push(...cleanPins(placing.map(p => ({ ...p, lon: ll[0], lat: ll[1] }))));
+    state.p.push(...cleanPins(placing.map(p => ({ ...p, lon: ll[0], lat: ll[1], c: "" }))));
     const n = placing.length;
     placing = null; document.querySelector(".place-bar")?.remove();
     save(); drawPins();
@@ -1528,7 +1569,7 @@ svg.node().addEventListener("click", e => {
 }, true);
 // photos : cachées quand la carte est dézoomée, petites vignettes de près, plus grandes dans le pays ouvert
 const pinHome = new Map();
-const pinIn = p => { const key = p.id + "@" + p.lon + "," + p.lat; if (!pinHome.has(key)) pinHome.set(key, countryAt(p.lon, p.lat)?.id || ""); return pinHome.get(key); };
+const pinIn = p => { if (p.c) return p.c; const key = p.id + "@" + p.lon + "," + p.lat; if (!pinHome.has(key)) pinHome.set(key, countryAt(p.lon, p.lat)?.id || ""); return pinHome.get(key); };
 // largeur visible de la carte en degrés de longitude : les photos n'apparaissent qu'à l'échelle d'une région (≈ la Méditerranée)
 const PIN_MAX_SPAN = 28;
 function viewSpan() {
@@ -1585,7 +1626,7 @@ function pinViewer(items, start = 0) {
   const back = document.createElement("div");
   back.className = "mp-back pv-back";
   document.body.append(back);
-  const close = () => back.remove();
+  const close = () => { back.remove(); document.querySelector(".ss-back")?._draw?.(); };
   const draw = () => {
     if (!list.length) return close();
     i = Math.min(i, list.length - 1);
@@ -1616,16 +1657,15 @@ function pinViewer(items, start = 0) {
       const b = e.currentTarget;
       if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer"; return; }
       const pin = list[i];
-      state.p = state.p.filter(x => x.id !== pin.id);
-      if (!Object.values(state.j).some(j => j.entries.some(en => en.ph.includes(pin.ph)))) dropPhotos([pin.ph]);
-      save(); drawPins();
+      unpinPhotos([pin.ph]);
+      save();
       list.splice(i, 1); draw();
     };
   };
   back.onclick = e => { if (e.target === back) close(); };
   draw();
 }
-$("btn-photos").onclick = () => { if (!pinsShown()) { store.set("explora-pins", "on"); drawPins(); } pickPinPhotos(); };
+const addMapPhotos = () => { if (!pinsShown()) { store.set("explora-pins", "on"); drawPins(); } pickPinPhotos(); };
 
 /* ---------- Mes vols : départs et arrivées reliés sur la carte ---------- */
 const flightsShown = () => store.get("explora-flights") !== "off";

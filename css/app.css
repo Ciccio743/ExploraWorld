@@ -585,7 +585,7 @@ body.real #view-map { background: #06121f; }
 .view-banner b { display: block; font: 800 17px/1.2 var(--f-display); }
 .view-banner small { color: var(--ink-2); font-size: 12px; }
 body.viewing .top, body.viewing .tabbar, body.viewing .fabs { display: none !important; }
-body.viewing #s-been, body.viewing #s-mark, body.viewing #s-site, body.viewing #s-swish, body.viewing .when.sm, body.viewing #s-journal, body.viewing #s-later { display: none !important; }
+body.viewing #s-been, body.viewing #s-mark, body.viewing #s-site, body.viewing #s-swish, body.viewing .when.sm, body.viewing #s-journal, body.viewing #s-addph, body.viewing #s-later { display: none !important; }
 /* mur de photos */
 .fab-photo { background: var(--found); color: var(--on-found); border-color: transparent; }
 .pins .pin-g { cursor: pointer; }
