@@ -115,7 +115,8 @@ function cleanPlans(list) {
 function serialize() {
   return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, t: Date.now() };
 }
-function save() { store.set(LS, JSON.stringify(serialize())); }
+let VIEW = null; // carte d'un ami ouverte par un lien : rien n'est enregistré
+function save() { if (!VIEW) store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
   if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j) };
@@ -175,6 +176,12 @@ async function load() {
     fetch(dataUrl("merged.json")).then(r => r.json()).catch(() => ({})),
     fetch(dataUrl("split.json")).then(r => r.json()).catch(() => ({}))
   ]);
+  // lien de partage : on affiche la carte de l'ami à la place de la sienne, sans rien enregistrer
+  const shared = location.hash.startsWith("#carte=") ? await unpackMap(location.hash.slice(7)).catch(() => null) : null;
+  if (shared) {
+    VIEW = shared;
+    state = { c: new Map(shared.c.map(c => [c, 0])), r: new Map(shared.r.map(r => [r, 0])), w: new Map(), u: new Map(), plans: [], k: shared.k, j: {} };
+  }
   migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
   const nb = topojson.neighbors(world.objects.countries.geometries);
@@ -209,6 +216,7 @@ async function load() {
     f.area = d3.sum(regionsBy.get(f.id) || [], r => r.area);
   }
   $("loading").hidden = true;
+  if (VIEW) showViewBanner();
   resize();
   drawBase();
   update();
@@ -715,7 +723,7 @@ $("btn-world").onclick = () => { routePlan = null; openWorld(); };
 /* ---------- Marquage ---------- */
 function tapRegion(r) {
   selSite = null;
-  if (quick) { toggleRegion(r.id); selected = r.id; update(); return; }
+  if (quick && !VIEW) { toggleRegion(r.id); selected = r.id; update(); return; }
   selected = selected === r.id ? null : r.id;
   update();
 }
@@ -1052,7 +1060,7 @@ function renderProgress() {
   const badges = [...got, ...BADGES.filter(b => !b.ok(s))];
 
   $("progress").innerHTML = `
-    <div class="row between"><h1>Mon exploration</h1><button class="btn small" id="btn-share">Partager</button></div>
+    <div class="row between"><h1>Mon exploration</h1><span class="row" style="gap:6px"><button class="btn small primary" id="btn-link">🔗 Ma carte</button><button class="btn small" id="btn-share">Image</button></span></div>
     <div class="block hero">
       <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
         <circle class="track" cx="60" cy="60" r="52"/>
@@ -1129,6 +1137,7 @@ function renderProgress() {
     showTab("map"); openCountry(siteHome(st)); selSite = st.id; update();
   });
   $("btn-share").onclick = shareImage;
+  $("btn-link").onclick = shareLink;
 }
 
 /* ---------- Photo d'un site (Wikipédia) ---------- */
@@ -1351,6 +1360,57 @@ async function showPhotoInto(code) {
     const k = Math.round(slides.scrollLeft / slides.clientWidth);
     box.querySelectorAll(".dots i").forEach((d, j) => d.classList.toggle("on", k === j));
   };
+}
+
+/* ---------- Carte à partager (lien) ---------- */
+// Le lien contient la carte elle-même (pays, régions, couleurs), compressée : pas de compte ni de serveur.
+const b64url = bytes => { let bin = ""; bytes.forEach(b => bin += String.fromCharCode(b)); return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
+const pipeBytes = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+async function packMap(name) {
+  const bytes = new TextEncoder().encode(JSON.stringify({ n: name, c: [...state.c.keys()], r: [...state.r.keys()], k: state.k }));
+  if (window.CompressionStream) try { return "z" + b64url(await pipeBytes(bytes, new CompressionStream("deflate-raw"))); } catch (e) {}
+  return "u" + b64url(bytes);
+}
+async function unpackMap(s) {
+  const bytes = Uint8Array.from(atob(s.slice(1).replace(/-/g, "+").replace(/_/g, "/")), ch => ch.charCodeAt(0));
+  const raw = s[0] === "z" ? await pipeBytes(bytes, new DecompressionStream("deflate-raw")) : bytes;
+  const d = JSON.parse(new TextDecoder().decode(raw));
+  return { n: String(d.n || "").slice(0, 40), c: (Array.isArray(d.c) ? d.c : []).map(String).slice(0, 400), r: (Array.isArray(d.r) ? d.r : []).map(String).slice(0, 6000), k: cleanColors(d.k) };
+}
+function shareLink() {
+  const back = document.createElement("div");
+  back.className = "mp-back";
+  back.innerHTML = `<div class="card mp" role="dialog" aria-label="Partager ma carte">
+    <h3>Partager ma carte</h3>
+    <p class="small" style="margin-top:0">Tes amis verront tes pays et tes régions en couleur, avec ton % du monde. Ton journal et tes projets restent privés.</p>
+    <label class="field">Ton prénom<input id="sh-name" maxlength="40" value="${esc(store.get("explora-name") || "")}" placeholder="Ex. : Tommy" enterkeyhint="done"></label>
+    <div class="btns"><button class="btn primary" data-sh="go">Envoyer le lien</button><button class="btn" data-sh="cancel">Annuler</button></div>
+  </div>`;
+  document.body.append(back);
+  const close = () => back.remove();
+  back.onclick = e => { if (e.target === back) close(); };
+  back.querySelector('[data-sh="cancel"]').onclick = close;
+  back.querySelector('[data-sh="go"]').onclick = async () => {
+    const name = $("sh-name").value.trim();
+    store.set("explora-name", name);
+    const url = location.origin + location.pathname + "#carte=" + await packMap(name);
+    close();
+    const text = `${name ? name + " a" : "J'ai"} exploré ${fmtPct(worldPct())} % du monde et ${plural(state.c.size, "pays", "pays")} 🌍`;
+    try {
+      if (navigator.share) { await navigator.share({ title: "Explora World", text, url }); return; }
+    } catch (e) { if (e.name === "AbortError") return; }
+    try { await navigator.clipboard.writeText(url); toast("Lien copié ✓ Colle-le dans un message", 2400); }
+    catch (e) { prompt("Copie ce lien :", url); }
+  };
+}
+function showViewBanner() {
+  const b = document.createElement("div");
+  b.className = "view-banner card";
+  b.innerHTML = `<div><b>🌍 Carte de ${esc(VIEW.n || "ton ami")}</b><small>${plural(state.c.size, "pays", "pays")} · ${fmtPct(worldPct())} % du monde</small></div>
+    <button class="btn small primary" id="vb-home">Ma carte</button>`;
+  document.body.classList.add("viewing");
+  document.body.append(b);
+  $("vb-home").onclick = () => { history.replaceState(null, "", location.pathname); location.reload(); };
 }
 
 /* ---------- Image à partager ---------- */
