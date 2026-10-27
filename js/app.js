@@ -52,11 +52,25 @@ let iso2 = {};
 // drapeau emoji à partir du code ISO à 2 lettres
 const flag = code => iso2[code] ? [...iso2[code]].map(ch => String.fromCodePoint(0x1F1A5 + ch.charCodeAt(0))).join("") : "";
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
-let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {} };
+let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {} };
 // Couleurs de la carte : chaque pays visité a sa couleur (choisie, sinon attribuée), ou tout en or
 const PALETTE = ["#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
 const cleanColors = o => Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([k, v]) => /^[A-Z0-9-]{2,8}$/.test(k) && PALETTE.includes(v)));
 const autoColor = new Map();
+// Journal de chaque pays : { cover, entries: [{ id, d, t, x, e, ph: [ids des photos] }] } ; les photos sont dans IndexedDB
+const MOODS = ["😍", "😀", "😌", "🤩", "😴", "🥵", "🥶", "🍽️", "🏖️", "🏔️", "🚶", "🎉"];
+function cleanJournal(o) {
+  const out = {};
+  for (const [c, v] of Object.entries(o && typeof o === "object" ? o : {})) {
+    if (!/^[A-Z0-9-]{2,8}$/.test(c) || !v || !Array.isArray(v.entries)) continue;
+    const entries = v.entries.filter(x => x && x.id).slice(0, 500).map(x => ({
+      id: String(x.id).slice(0, 20), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "", t: String(x.t || "").slice(0, 120),
+      x: String(x.x || "").slice(0, 20000), e: MOODS.includes(x.e) ? x.e : "", ph: (Array.isArray(x.ph) ? x.ph : []).map(String).slice(0, 30)
+    }));
+    out[c] = { cover: typeof v.cover === "string" ? v.cover.slice(0, 20) : "", entries };
+  }
+  return out;
+}
 const countryColor = code => state.k[code] || (store.get("explora-colors") !== "gold" ? autoColor.get(code) : null) || null;
 // style de carte : « classic » (dessinée) ou « real » (satellite avec les reliefs)
 const REAL = (() => { try { return localStorage.getItem("explora-mapstyle") === "real"; } catch (e) { return false; } })();
@@ -99,12 +113,12 @@ function cleanPlans(list) {
   });
 }
 function serialize() {
-  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, t: Date.now() };
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, t: Date.now() };
 }
 function save() { store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
-  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k) };
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j) };
 } catch (e) {}
 quick = store.get("explora-quick") === "1";
 // les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
@@ -775,7 +789,7 @@ function pickMonth(v, title = "Date de visite") {
 const isoDay = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 // Calendrier du trip : on touche le jour du départ, puis celui du retour.
 // Les flèches changent de mois, et le titre ouvre le choix du mois et de l'année (sans limite).
-function pickDates(start, end, toEnd, nights) {
+function pickDates(start, end, toEnd, nights, single = false) {
   return new Promise(done => {
     let s = start || "", e = end || "", phase = toEnd && s ? "end" : "start";
     let view = new Date((toEnd && (e || s) || s || isoDay(new Date())) + "T12:00");
@@ -783,6 +797,7 @@ function pickDates(start, end, toEnd, nights) {
     let years = false;
     const back = document.createElement("div");
     back.className = "mp-back";
+    if (single) back.style.zIndex = 90; // au-dessus des fiches
     if (editPlan?.color) back.style.setProperty("--trip", editPlan.color);
     document.body.append(back);
     const close = r => { back.remove(); done(r); };
@@ -793,7 +808,7 @@ function pickDates(start, end, toEnd, nights) {
       const today = isoDay(new Date());
       const n = s && e ? Math.round((new Date(e + "T12:00") - new Date(s + "T12:00")) / 864e5) : 0;
       back.innerHTML = `<div class="card mp cal" role="dialog" aria-label="Dates du trip">
-        <div class="cal-sum">
+        <div class="cal-sum" ${single ? "hidden" : ""}>
           <button type="button" class="${phase === "start" ? "on" : ""}" data-ph="start"><small>Départ</small>${s ? fmtDate(s) : "—"}</button>
           <button type="button" class="${phase === "end" ? "on" : ""}" data-ph="end"><small>Retour</small>${e ? fmtDate(e) : "—"}</button>
         </div>
@@ -807,7 +822,7 @@ function pickDates(start, end, toEnd, nights) {
           const iso = isoDay(new Date(y, m, d, 12));
           const cls = [iso === s ? "s" : "", iso === e ? "e" : "", s && e && iso > s && iso < e ? "in" : "", iso === today ? "today" : ""].join(" ");
           return `<button type="button" data-day="${iso}" class="${cls}">${d}</button>`; }).join("")}</div>`}
-        <p class="small cal-hint">${s && e && phase === "start" ? `${nf(n)} · touche un jour pour changer le départ` : phase === "start" ? "Touche le jour du départ" : "Touche le jour du retour"}${nights && !e && s ? ` · ${nf(nights)} prévues dans l'itinéraire` : ""}</p>
+        <p class="small cal-hint">${single ? "Touche le jour" : s && e && phase === "start" ? `${nf(n)} · touche un jour pour changer le départ` : phase === "start" ? "Touche le jour du départ" : "Touche le jour du retour"}${nights && !e && s ? ` · ${nf(nights)} prévues dans l'itinéraire` : ""}</p>
         <div class="btns">
           <button class="btn primary" data-mp="ok">Enregistrer</button>
           ${start || end ? `<button class="btn" data-mp="none">Effacer les dates</button>` : ""}
@@ -827,6 +842,7 @@ function pickDates(start, end, toEnd, nights) {
       else if (t.dataset.month) { view.setMonth(+t.dataset.month); years = false; }
       else if (t.dataset.day) {
         const d = t.dataset.day;
+        if (single) return close({ start: d, end: "" });
         if (phase === "start" || (s && d < s)) { s = d; if (e && e < s) e = ""; phase = "end"; }
         else { e = d; phase = "start"; }
       }
@@ -925,6 +941,7 @@ function renderSheet() {
         <button class="back-ic" id="s-back" aria-label="Retour au monde">←</button>
         <div class="cname grow"><b>${flag(current)} ${esc(f.properties.n)}</b><small>${been && n > 1 ? `<span class="ok">✓ Visité</span> · ` : ""}${v} / ${n} ${esc(n > 1 ? f.kind : one)} visit${fem ? "ée" : "é"}${n > 1 ? "s" : ""}</small></div>
         ${n > 1 && (been || sel) ? "" : `<button class="btn small ${been ? "done" : "primary"}" id="s-been">${been ? "✓ Visité" : "Marquer visité"}</button>`}
+        <button class="btn small more jr-btn" id="s-journal" aria-label="Photos et journal de voyage">📖${state.j[current]?.entries.length ? `<i>${state.j[current].entries.length}</i>` : ""}</button>
         <button class="btn small more" id="s-more" aria-expanded="${sheetMore}" aria-label="${sheetMore ? "Réduire" : "Plus d'options"}">${sheetMore ? "⌄" : "⌃"}</button>
       </div>
       <div class="bar thin"><i style="width:${n ? v / n * 100 : 0}%"></i></div>
@@ -952,6 +969,7 @@ function renderSheet() {
       ${(sitesBy.get(current) || []).length ? `<p class="hint">◆ Patrimoine mondial : ${(sitesBy.get(current) || []).filter(st => state.u.has(st.id)).length} / ${(sitesBy.get(current) || []).length} sites visités. Touche un losange sur la carte.</p>` : ""}
       <label class="switch"><input type="checkbox" id="s-quick" ${quick ? "checked" : ""}>Marquage rapide : un appui marque directement</label>` : ""}`;
     $("s-back").onclick = openWorld;
+    $("s-journal").onclick = () => journalSheet(current);
     sheet.querySelectorAll("[data-kc]").forEach(b => b.onclick = () => { state.k[current] = b.dataset.kc; save(); update(); });
     // la date choisie avant d'appuyer sur « J'y suis allé » est enregistrée avec la visite
     if ($("s-been")) $("s-been").onclick = () => {
@@ -1161,6 +1179,180 @@ async function showPhoto(site) {
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
 
+/* ---------- Journal de voyage (un par pays) ---------- */
+// Photos personnelles : réduites puis gardées sur l'appareil (IndexedDB), jamais envoyées ailleurs
+const photoDB = (() => {
+  let p = null;
+  return () => p ||= new Promise((res, rej) => {
+    const r = indexedDB.open("explora-photos", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("p");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => { p = null; rej(r.error); };
+  });
+})();
+const idb = async (mode, fn) => {
+  const db = await photoDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("p", mode), req = fn(tx.objectStore("p"));
+    tx.oncomplete = () => res(req && req.result);
+    tx.onerror = () => rej(tx.error);
+  });
+};
+const photoURLs = new Map();
+async function photoURL(id) {
+  if (photoURLs.has(id)) return photoURLs.get(id);
+  const blob = await idb("readonly", st => st.get(id)).catch(() => null);
+  const url = blob ? URL.createObjectURL(blob) : "";
+  photoURLs.set(id, url);
+  return url;
+}
+async function shrinkPhoto(file, max = 1600) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const r = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * r); c.height = Math.round(img.naturalHeight * r);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise(res => c.toBlob(res, "image/jpeg", .82));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function addPhotos(files) {
+  try { navigator.storage?.persist?.(); } catch (e) {}
+  const ids = [];
+  for (const f of files) {
+    const blob = await shrinkPhoto(f).catch(() => null);
+    if (!blob) continue;
+    const id = "ph" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    await idb("readwrite", st => st.put(blob, id));
+    ids.push(id);
+  }
+  return ids;
+}
+const dropPhotos = ids => ids.forEach(id => { idb("readwrite", st => st.delete(id)).catch(() => {}); const u = photoURLs.get(id); if (u) URL.revokeObjectURL(u); photoURLs.delete(id); });
+// remplit les <img data-ph="id"> d'un bloc avec les photos de l'appareil
+function fillPhotos(box) {
+  box.querySelectorAll("img[data-ph]").forEach(async img => { const u = await photoURL(img.dataset.ph); if (u) img.src = u; else img.remove(); });
+}
+const journalOf = code => state.j[code] || { cover: "", entries: [] };
+function journalSheet(code) {
+  document.querySelector(".ss-back")?.remove();
+  const f = byId.get(code), name = f.properties.n;
+  const back = document.createElement("div");
+  back.className = "mp-back ss-back";
+  back.style.setProperty("--trip", countryColor(code) || "var(--found)");
+  document.body.append(back);
+  let edit = null; // entrée en cours d'écriture (copie)
+  const persist = () => {
+    const j = journalOf(code);
+    if (j.entries.length || j.cover) state.j[code] = j; else delete state.j[code];
+    save();
+  };
+  const close = () => { if (edit) dropPhotos(edit.added || []); back.remove(); update(); };
+  const draw = () => {
+    const j = journalOf(code);
+    const mine = j.entries.flatMap(e => e.ph);
+    const cover = j.cover && mine.includes(j.cover) ? j.cover : mine[0];
+    const been = state.c.get(code), n = f.nreg, v = visitedIn(code);
+    const list = [...j.entries].sort((a, b) => (b.d || "").localeCompare(a.d || ""));
+    back.innerHTML = `<div class="card ss jr" role="dialog" aria-label="Journal : ${esc(name)}">
+      <button class="icon-btn ss-x" data-j="close" aria-label="Fermer">✕</button>
+      ${cover ? `<div class="jr-cover"><img data-ph="${cover}" alt=""><div class="jr-title"><b>${flag(code)} ${esc(name)}</b><small>Mon journal de voyage</small></div></div>`
+        : `<div class="ss-photo" id="ss-photo" hidden></div>`}
+      <div class="ss-in">
+        ${cover ? "" : `<div class="ss-head"><span class="n">${flag(code) || "•"}</span><span class="t"><b>${esc(name)}</b><small>Mon journal de voyage</small></span></div>`}
+        <div class="jr-stats">
+          <span><b>${been !== undefined ? (been ? esc(monthLabel(monthValue(been))) || "Visité" : "Visité") : "Pas encore visité"}</b><small>${been !== undefined ? "visite" : "à découvrir"}</small></span>
+          ${n > 1 ? `<span><b>${v} / ${n}</b><small>${esc(f.kind)}</small></span>` : ""}
+          <span><b>${j.entries.length}</b><small>${j.entries.length > 1 ? "souvenirs" : "souvenir"}</small></span>
+          <span><b>${mine.length}</b><small>photo${mine.length > 1 ? "s" : ""}</small></span>
+        </div>
+        ${edit ? editor(edit) : `<button class="btn primary jr-new" data-j="new">＋ Écrire un souvenir</button>`}
+        ${!edit && !list.length ? `<p class="small jr-empty">Raconte ton voyage : un moment fort, une adresse, une rencontre… avec tes photos. Tout reste sur ton téléphone.</p>` : ""}
+        <div class="jr-list">${edit ? "" : list.map(e => `
+          <article class="jr-entry" data-id="${e.id}">
+            ${e.ph.length ? `<div class="jr-photos n${Math.min(e.ph.length, 3)}">${e.ph.slice(0, 3).map(id => `<img data-ph="${id}" alt="">`).join("")}${e.ph.length > 3 ? `<span class="more">+${e.ph.length - 3}</span>` : ""}</div>` : ""}
+            <div class="jr-meta">${e.e ? `<span class="mood">${e.e}</span>` : ""}<span>${e.d ? esc(fmtDate(e.d)) : "Sans date"}</span><button class="linkish" data-j="edit" data-id="${e.id}">Modifier</button></div>
+            ${e.t ? `<h4>${esc(e.t)}</h4>` : ""}
+            ${e.x ? `<p>${esc(e.x).replace(/\n/g, "<br>")}</p>` : ""}
+          </article>`).join("")}</div>
+      </div></div>`;
+    fillPhotos(back);
+    if (!cover) showPhotoInto(code);
+    back.querySelector('[data-j="close"]').onclick = close;
+    const nw = back.querySelector('[data-j="new"]');
+    if (nw) nw.onclick = () => { edit = { id: "e" + Date.now().toString(36), d: isoDay(new Date()), t: "", x: "", e: "", ph: [], added: [], isNew: true }; draw(); };
+    back.querySelectorAll('[data-j="edit"]').forEach(b => b.onclick = () => { const e = journalOf(code).entries.find(x => x.id === b.dataset.id); edit = { ...e, ph: [...e.ph], added: [] }; draw(); });
+    if (edit) bindEditor();
+  };
+  const editor = e => `<div class="jr-edit">
+    <div class="row between"><button type="button" class="date-btn" data-j="date">📅 ${e.d ? esc(fmtDate(e.d)) : "Choisir la date"}</button></div>
+    <div class="jr-moods">${MOODS.map(m => `<button type="button" data-mood="${m}" aria-pressed="${e.e === m}">${m}</button>`).join("")}</div>
+    <input id="jr-t" placeholder="Titre (facultatif)" maxlength="120" value="${esc(e.t)}">
+    <textarea id="jr-x" placeholder="Qu'est-ce qui t'a marqué aujourd'hui ?">${esc(e.x)}</textarea>
+    <div class="jr-grid">${e.ph.map(id => `<div class="jr-th"><img data-ph="${id}" alt=""><button type="button" data-rmph="${id}" aria-label="Retirer la photo">✕</button>${journalOf(code).cover === id ? `<span class="cov">★ Couverture</span>` : `<button type="button" class="setcov" data-cov="${id}">☆ Couverture</button>`}</div>`).join("")}
+      <label class="jr-addph">＋<small>Photos</small><input type="file" accept="image/*" multiple id="jr-files" hidden></label></div>
+    <div class="btns"><button class="btn primary" data-j="save">Enregistrer</button><button class="btn" data-j="cancel">Annuler</button>${e.isNew ? "" : `<button class="btn danger" data-j="del">Supprimer</button>`}</div>
+  </div>`;
+  const keepText = () => { edit.t = $("jr-t").value; edit.x = $("jr-x").value; };
+  const bindEditor = () => {
+    back.querySelector('[data-j="date"]').onclick = async () => { keepText(); const r = await pickDates(edit.d, "", false, 0, true); if (r && r.start) edit.d = r.start; draw(); };
+    back.querySelectorAll("[data-mood]").forEach(b => b.onclick = () => { keepText(); edit.e = edit.e === b.dataset.mood ? "" : b.dataset.mood; draw(); });
+    $("jr-files").onchange = async ev => {
+      keepText();
+      const files = [...ev.target.files].slice(0, 30 - edit.ph.length);
+      if (!files.length) return;
+      toast("Ajout des photos…", 1200);
+      const ids = await addPhotos(files).catch(() => []);
+      if (!ids.length) { toast("Impossible d'ajouter ces photos"); return; }
+      edit.ph.push(...ids); edit.added.push(...ids); draw();
+    };
+    back.querySelectorAll("[data-rmph]").forEach(b => b.onclick = () => { keepText(); edit.ph = edit.ph.filter(x => x !== b.dataset.rmph); draw(); });
+    back.querySelectorAll("[data-cov]").forEach(b => b.onclick = () => { keepText(); const j = journalOf(code); j.cover = b.dataset.cov; state.j[code] = j; draw(); });
+    back.querySelector('[data-j="cancel"]').onclick = () => { dropPhotos(edit.added); edit = null; draw(); };
+    back.querySelector('[data-j="save"]').onclick = () => {
+      keepText();
+      const j = journalOf(code), old = j.entries.find(x => x.id === edit.id);
+      if (!edit.t.trim() && !edit.x.trim() && !edit.ph.length && !edit.e) { toast("Écris quelques mots ou ajoute une photo", 1600); return; }
+      if (old) dropPhotos(old.ph.filter(id => !edit.ph.includes(id)));
+      const clean = { id: edit.id, d: edit.d, t: edit.t.trim(), x: edit.x.trim(), e: edit.e, ph: edit.ph };
+      j.entries = old ? j.entries.map(x => x.id === edit.id ? clean : x) : [...j.entries, clean];
+      state.j[code] = j; edit = null; persist(); draw();
+      toast("Souvenir enregistré ✓", 1200);
+    };
+    const del = back.querySelector('[data-j="del"]');
+    if (del) del.onclick = () => {
+      if (!del.dataset.armed) { del.dataset.armed = "1"; del.textContent = "Confirmer"; return; }
+      const j = journalOf(code), old = j.entries.find(x => x.id === edit.id);
+      dropPhotos([...(old ? old.ph : []), ...edit.added]);
+      j.entries = j.entries.filter(x => x.id !== edit.id);
+      if (old && old.ph.includes(j.cover)) j.cover = "";
+      state.j[code] = j; edit = null; persist(); draw();
+    };
+  };
+  back.onclick = e => { if (e.target === back && !edit) close(); };
+  draw();
+}
+// photos Wikipédia du pays, quand le journal n'a pas encore de photo à soi
+async function showPhotoInto(code) {
+  const box = $("ss-photo");
+  if (!box) return;
+  const name = byId.get(code).properties.n;
+  const photo = await fetchPhoto({ id: "c:" + code, n: name, lang: "fr", q: name });
+  if (!photo || $("ss-photo") !== box) return;
+  const many = photo.list.length > 1;
+  box.innerHTML = `<div class="slides">${photo.list.map((src, i) => `<img src="${esc(src)}" alt="${esc(name)} (${i + 1})" loading="${i ? "lazy" : "eager"}">`).join("")}</div>
+    ${many ? `<div class="dots">${photo.list.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div>` : ""}
+    <a href="${esc(photo.url)}" target="_blank" rel="noopener">Photos : Wikipédia · ${esc(photo.title)}</a>`;
+  box.hidden = false;
+  const slides = box.querySelector(".slides");
+  slides.querySelectorAll("img").forEach(img => img.onerror = () => { img.remove(); if (!slides.children.length) box.hidden = true; });
+  if (many) slides.onscroll = () => {
+    const k = Math.round(slides.scrollLeft / slides.clientWidth);
+    box.querySelectorAll(".dots i").forEach((d, j) => d.classList.toggle("on", k === j));
+  };
+}
+
 /* ---------- Image à partager ---------- */
 async function shareImage() {
   const btn = $("btn-share");
@@ -1227,6 +1419,7 @@ function tripItem(f) {
       <div class="trip-body">
         <div class="when">Date de visite (facultatif) ${monthBtn("data-when", monthValue(state.c.get(f.id)))}</div>
         <div class="trip-actions">
+          <button class="btn small primary" data-act="journal">📖 Journal${state.j[f.id]?.entries.length ? ` (${state.j[f.id].entries.length})` : ""}</button>
           <button class="btn small" data-act="map">Voir sur la carte</button>
           <button class="btn small danger" data-act="remove">Retirer ce pays</button>
         </div>
@@ -1250,6 +1443,7 @@ function bindTrip(el) {
   };
   const act = a => el.querySelector(`[data-act="${a}"]`);
   if (act("map")) act("map").onclick = () => { showTab("map"); openCountry(code); };
+  if (act("journal")) act("journal").onclick = () => journalSheet(code);
   if (act("remove")) act("remove").onclick = e => {
     const b = e.currentTarget;
     if (b.dataset.armed) { setCountry(code, false); openTrips.delete(code); update(); toast(f.properties.n + " retiré de tes voyages"); return; }
@@ -2130,6 +2324,7 @@ $("import-file").onchange = async e => {
     for (const [id, t] of toMap(d.u)) if (siteById.has(id) && !state.u.has(id)) state.u.set(id, t);
     for (const p of cleanPlans(d.plans)) if (!state.plans.some(x => x.id === p.id)) state.plans.push(p);
     state.k = { ...cleanColors(d.k), ...state.k };
+    for (const [c, jj] of Object.entries(cleanJournal(d.j))) if (!state.j[c]) state.j[c] = jj;
     save(); update();
     toast(`Sauvegarde importée : ${added} nouveau${added > 1 ? "x" : ""} pays`);
   } catch (err) { toast("Ce fichier n'est pas une sauvegarde Explora."); }
@@ -2137,7 +2332,7 @@ $("import-file").onchange = async e => {
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
   if (b.dataset.armed) {
-    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {} }; save();
+    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {} }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
     update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;

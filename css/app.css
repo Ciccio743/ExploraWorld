@@ -537,3 +537,46 @@ body.real #view-map { background: #06121f; }
 .real #map .city { opacity: .95; }
 .real #map .city circle { fill: #fff; }
 .real #map .city text { fill: #fff; stroke: rgba(0, 0, 0, .65); stroke-opacity: 1; font-weight: 600; }
+/* journal de voyage */
+.jr-btn { position: relative; }
+.jr-btn i { position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--c, var(--found)); color: var(--on-found); font: 700 10px/16px var(--f-body); font-style: normal; }
+.jr-cover { position: relative; height: 240px; overflow: hidden; border-radius: 22px 22px 0 0; background: var(--fog); }
+.jr-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.jr-cover .jr-title { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 18px 14px; background: linear-gradient(transparent, rgba(0, 0, 0, .65)); color: #fff; display: grid; }
+.jr-cover .jr-title b { font: 800 28px/1.1 var(--f-display); }
+.jr-cover .jr-title small { opacity: .85; }
+.jr-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 8px; }
+.jr-stats span { display: grid; padding: 10px; border-radius: 14px; background: color-mix(in srgb, var(--trip) 14%, var(--bg)); border: 1px solid color-mix(in srgb, var(--trip) 30%, transparent); text-align: center; }
+.jr-stats b { font: 800 15px/1.2 var(--f-display); text-transform: capitalize; }
+.jr-stats small { font-size: 11px; color: var(--ink-2); }
+.btn.primary.jr-new { width: auto; justify-self: stretch; padding: 13px; font-size: 16px; background: var(--trip); color: #fff; }
+.jr-empty { text-align: center; margin: 0; }
+.jr-list { display: grid; gap: 14px; }
+.jr-entry { border-radius: 18px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; padding-bottom: 12px; }
+.jr-entry h4 { margin: 4px 14px 0; font: 800 18px/1.25 var(--f-display); }
+.jr-entry p { margin: 6px 14px 0; font-size: 15px; line-height: 1.5; }
+.jr-meta { display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; font-size: 12px; color: var(--ink-2); }
+.jr-meta .mood { font-size: 20px; }
+.jr-meta .linkish { margin: 0 0 0 auto; display: inline; }
+.jr-photos { display: grid; gap: 3px; position: relative; }
+.jr-photos.n1 { grid-template-columns: 1fr; } .jr-photos.n2 { grid-template-columns: 1fr 1fr; } .jr-photos.n3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+.jr-photos img { width: 100%; height: 100%; min-height: 0; object-fit: cover; display: block; background: var(--fog); aspect-ratio: 4 / 3; }
+.jr-photos.n1 img { aspect-ratio: 16 / 10; }
+.jr-photos.n3 img:first-child { grid-row: 1 / 3; aspect-ratio: auto; height: 100%; }
+.jr-photos.n3 img:not(:first-child) { aspect-ratio: auto; height: 100px; }
+.jr-photos .more { position: absolute; right: 8px; bottom: 8px; background: rgba(0, 0, 0, .6); color: #fff; font-weight: 700; padding: 3px 9px; border-radius: 10px; font-size: 13px; }
+.jr-edit { display: grid; gap: 10px; padding: 12px; border-radius: 18px; border: 2px solid var(--trip); background: var(--bg); }
+.jr-edit input, .jr-edit textarea { font: inherit; color: var(--ink); padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); width: 100%; }
+.jr-edit textarea { min-height: 140px; line-height: 1.45; }
+.jr-moods { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.jr-moods::-webkit-scrollbar { display: none; }
+.jr-moods button { flex: none; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 21px; padding: 0; }
+.jr-moods button[aria-pressed="true"] { border: 2px solid var(--trip); background: color-mix(in srgb, var(--trip) 18%, var(--surface)); }
+.jr-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.jr-th { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--fog); }
+.jr-th img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.jr-th [data-rmph] { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, .6); color: #fff; font-size: 12px; padding: 0; }
+.jr-th .setcov, .jr-th .cov { position: absolute; left: 4px; bottom: 4px; font-size: 10px; padding: 3px 6px; border-radius: 8px; border: 0; background: rgba(0, 0, 0, .55); color: #fff; }
+.jr-th .cov { background: var(--trip); }
+.jr-addph { aspect-ratio: 1; border-radius: 12px; border: 2px dashed var(--trip); display: grid; place-content: center; text-align: center; font-size: 26px; color: var(--trip); cursor: pointer; }
+.jr-addph small { font-size: 11px; }
