@@ -1521,14 +1521,15 @@ svg.node().addEventListener("click", e => {
     return;
   }
 }, true);
-// photos : petites vignettes partout ; dans le pays ouvert, chaque pile s'ouvre en toile d'araignée
+// photos : cachées quand la carte est dézoomée, petites vignettes de près, plus grandes dans le pays ouvert
 const pinHome = new Map();
 const pinIn = p => { const key = p.id + "@" + p.lon + "," + p.lat; if (!pinHome.has(key)) pinHome.set(key, countryAt(p.lon, p.lat)?.id || ""); return pinHome.get(key); };
-const WEB_MAX = 8;
+const PIN_MIN_K = 3;
 function drawPins() {
   const list = pinsShown() && !VIEW ? state.p : [], groups = [];
   for (const p of list) {
     const open = !!current && pinIn(p) === current, r = (open ? 34 : 22) / k;
+    if (!open && k < PIN_MIN_K) continue;
     const [x, y] = projection([p.lon, p.lat]);
     const g = groups.find(o => o.open === open && Math.abs(o.x - x) < r && Math.abs(o.y - y) < r);
     if (g) g.items.push(p); else groups.push({ x, y, open, items: [p] });
@@ -1551,7 +1552,6 @@ function drawPins() {
     b.append("rect").attr("x", -w / 2).attr("y", -8).attr("width", w).attr("height", 16).attr("rx", 8);
     b.append("text").attr("dy", "0.35em").text(t);
   };
-  const motion = !reduceMotion();
   gPins.selectAll(".pin-g").data(groups, d => d.id).join(enter => {
     const m = enter.append("g").attr("class", d => "pin-g" + (d.open ? " web" : " mini"));
     m.each(function (d) {
@@ -1562,21 +1562,10 @@ function drawPins() {
         el.on("click", e => { e.stopPropagation(); const c = pinIn(d.items[0]); c ? openCountry(c) : pinViewer(d.items); });
         return;
       }
-      if (d.n === 1) { thumb(el, true, d.items[0].ph); el.on("click", e => { e.stopPropagation(); pinViewer(d.items); }); return; }
-      // toile d'araignée : les photos s'écartent autour du point où elles ont été prises
-      const shown = d.items.slice(0, WEB_MAX), R = shown.length <= 3 ? 36 : shown.length <= 5 ? 44 : 54;
-      const pos = shown.map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / shown.length; return [R * Math.cos(a), R * Math.sin(a)]; });
-      const legs = el.append("g").attr("class", "pv-legs");
-      pos.forEach(([x, y]) => legs.append("line").attr("x1", 0).attr("y1", 0).attr("x2", motion ? 0 : x).attr("y2", motion ? 0 : y)
-        .call(l => motion && l.transition().duration(380).ease(d3.easeBackOut).attr("x2", x).attr("y2", y)));
-      el.append("circle").attr("class", "pv-hub").attr("r", 4);
-      shown.forEach((p, i) => {
-        const c = el.append("g").attr("class", "pv-leg").attr("transform", motion ? "translate(0,0) scale(.3)" : `translate(${pos[i][0]},${pos[i][1]})`);
-        thumb(c, true, p.ph);
-        if (i === WEB_MAX - 1 && d.n > WEB_MAX) badge(c, "+" + (d.n - WEB_MAX + 1), 0, 0);
-        c.on("click", e => { e.stopPropagation(); pinViewer(d.items, i); });
-        if (motion) c.transition().delay(i * 25).duration(380).ease(d3.easeBackOut).attr("transform", `translate(${pos[i][0]},${pos[i][1]})`);
-      });
+      // une pile : une vignette avec le nombre, qui ouvre la galerie
+      thumb(el, true, d.items[0].ph);
+      if (d.n > 1) badge(el, d.n, 15, 15);
+      el.on("click", e => { e.stopPropagation(); pinViewer(d.items); });
     });
     return m;
   }).attr("transform", pinTransform);
