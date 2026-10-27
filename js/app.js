@@ -73,6 +73,9 @@ function toMap(v) {
   if (v && typeof v === "object") return new Map(Object.entries(v).map(([k, t]) => [k, +t || 0]));
   return new Map();
 }
+const httpsOr = u => typeof u === "string" && u.startsWith("https://") ? u.slice(0, 500) : "";
+const cleanSpots = l => (Array.isArray(l) ? l : []).filter(x => x && x.n).slice(0, 100)
+  .map(x => ({ n: String(x.n).slice(0, 140), done: !!x.done, url: httpsOr(x.url), img: httpsOr(x.img) }));
 function cleanPlans(list) {
   return (Array.isArray(list) ? list : []).filter(p => p && p.id).map(p => {
     const stops = Array.isArray(p.stops) ? p.stops.map(String) : [];
@@ -82,7 +85,9 @@ function cleanPlans(list) {
       stops, notes: String(p.notes || ""), done: !!p.done,
       // nights[i] : nuits passées à l'étape i · modes[i] : transport pour y arriver ("" = choisi selon la distance)
       nights: stops.map((_, i) => Math.max(0, Math.min(99, Math.round(+(p.nights || [])[i]) || 0))),
-      modes: stops.map((_, i) => MODES[(p.modes || [])[i]] ? p.modes[i] : "")
+      modes: stops.map((_, i) => MODES[(p.modes || [])[i]] ? p.modes[i] : ""),
+      snotes: stops.map((_, i) => String((p.snotes || [])[i] || "").slice(0, 5000)), // notes de chaque étape
+      spots: stops.map((_, i) => cleanSpots((p.spots || [])[i])) // spots et activités de chaque étape
     };
   });
 }
@@ -1060,10 +1065,10 @@ const photos = new Map();
 async function fetchPhoto(site) {
   if (photos.has(site.id)) return photos.get(site.id);
   const p = (async () => {
-    const lang = site.wiki ? "fr" : "en";
+    const lang = site.lang || (site.wiki ? "fr" : "en");
     const api = params => fetch(`https://${lang}.wikipedia.org/w/api.php?${new URLSearchParams({ format: "json", origin: "*", ...params })}`).then(r => r.json());
     const want = { action: "query", prop: "pageimages|info", piprop: "thumbnail", pithumbsize: "800", inprop: "url" };
-    let d = site.wiki ? await api({ ...want, titles: site.wiki }) : await api({ ...want, generator: "search", gsrsearch: site.en || site.n, gsrlimit: "1" });
+    let d = site.wiki ? await api({ ...want, titles: site.wiki }) : await api({ ...want, generator: "search", gsrsearch: site.q || site.en || site.n, gsrlimit: "1" });
     let page = Object.values(d.query?.pages || {})[0];
     if (!page?.thumbnail && !site.wiki) { // repli : recherche sur le début du nom
       d = await api({ ...want, generator: "search", gsrsearch: (site.en || site.n).split(/[,(:–]/)[0], gsrlimit: "1" });
@@ -1300,7 +1305,7 @@ function renderPlans() {
         <button class="btn primary" data-start="Mon prochain trip">Créer un trip</button>
       </div>
     </div>`}`;
-  const start = name => { editPlan = { id: Date.now().toString(36), name, color: TRIP_COLORS[state.plans.length % TRIP_COLORS.length], setup: true, start: "", end: "", stops: [], nights: [], modes: [], notes: "", done: false, isNew: true }; renderPlans(); };
+  const start = name => { editPlan = { id: Date.now().toString(36), name, color: TRIP_COLORS[state.plans.length % TRIP_COLORS.length], setup: true, start: "", end: "", stops: [], nights: [], modes: [], snotes: [], spots: [], notes: "", done: false, isNew: true }; renderPlans(); };
   if ($("p-new")) $("p-new").onclick = () => start("Mon prochain trip");
   box.querySelectorAll("[data-start]").forEach(b => b.onclick = () => start(b.dataset.start));
   box.querySelectorAll("[data-plan]").forEach(el => {
@@ -1323,7 +1328,7 @@ function renderPlans() {
     };
   });
 }
-const copyPlan = p => ({ ...p, stops: [...p.stops], nights: [...p.nights], modes: [...p.modes] });
+const copyPlan = p => ({ ...p, stops: [...p.stops], nights: [...p.nights], modes: [...p.modes], snotes: [...(p.snotes || p.stops.map(() => ""))], spots: (p.spots || p.stops.map(() => [])).map(l => l.map(x => ({ ...x }))) });
 function tripTotals(p) {
   let km = 0, h = 0, flights = 0;
   for (let i = 1; i < p.stops.length; i++) {
@@ -1452,7 +1457,7 @@ function renderTripMap(box) {
             return `${i ? `<li class="leg">${modeSel(i)}<span>${fmtKm(l.km, l.real)} · ${fmtDur(l.h, l.real)}</span></li>` : ""}
             <li class="istop" data-i="${i}">
               <span class="n">${i + 1}</span>
-              <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i)].filter(Boolean).join(" · "))}</small></span>
+              <span class="t"><b>${esc(placeName(id))}</b><small>${esc([placeSub(id), stopDates(p, i), p.spots[i].length ? plural(p.spots[i].length, "spot", "spots") : "", p.snotes[i] ? "📝" : ""].filter(Boolean).join(" · "))}</small><em class="open-hint">Notes, spots, hébergement ›</em></span>
               <span class="nights"><button data-nt="-1" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-nt="1" aria-label="Une nuit de plus">+</button></span>
               <span class="moves"><button class="icon-btn" data-rm aria-label="Retirer ${esc(placeName(id))}">✕</button>${p.stops.length > 1 ? `<span class="grip" aria-label="Glisser pour changer l'ordre" title="Glisser pour changer l'ordre">≡</span>` : ""}</span>
             </li>`; }).join("")}
@@ -1490,7 +1495,7 @@ function renderTripMap(box) {
     };
   }
   if ($("e-wishes")) $("e-wishes").onclick = () => {
-    for (const id of state.w.keys()) if (place(id) && !p.stops.includes(id)) { p.stops.push(id); p.nights.push(1); p.modes.push(""); }
+    for (const id of state.w.keys()) if (place(id) && !p.stops.includes(id)) { p.stops.push(id); p.nights.push(1); p.modes.push(""); p.snotes.push(""); p.spots.push([]); }
     tripAdd = null; tripCam = null; redo();
   };
   box.querySelectorAll(".tf-list [data-leg]").forEach(sel => sel.onchange = () => { p.modes[+sel.dataset.leg] = sel.value; redo(); });
@@ -1498,6 +1503,7 @@ function renderTripMap(box) {
     const i = +li.dataset.i;
     li.querySelectorAll("[data-nt]").forEach(b => b.onclick = () => { p.nights[i] = Math.max(0, Math.min(99, p.nights[i] + +b.dataset.nt)); redo(); });
     li.querySelector("[data-rm]").onclick = () => { removeTripStop(p, i); redo(); };
+    li.querySelector(".t").onclick = () => stopSheet(p, i);
     // glisser la poignée pour changer l'ordre
     const handle = li.querySelector(".grip");
     if (handle) handle.onpointerdown = e => {
@@ -1555,36 +1561,168 @@ let tripCam = null, tripBig = false;
 let tripFocus = null, tripFocusGo = false; // pays ouvert sur la carte du trip (ses régions et ses sites)
 // étape en train d'être choisie : { id, nights, mode } (id vide tant qu'aucun lieu n'est touché)
 let tripAdd = null;
-const pendingPlan = p => !tripAdd?.id ? p : { ...p, stops: [...p.stops, tripAdd.id], nights: [...p.nights, tripAdd.nights], modes: [...p.modes, tripAdd.mode] };
+const pendingPlan = p => !tripAdd?.id ? p : { ...p, stops: [...p.stops, tripAdd.id], nights: [...p.nights, tripAdd.nights], modes: [...p.modes, tripAdd.mode], snotes: [...p.snotes, ""], spots: [...p.spots, []] };
 function addTripStop(p, id) {
   if (p.stops[p.stops.length - 1] === id) return false;
-  p.stops.push(id); p.nights.push(1); p.modes.push("");
+  p.stops.push(id); p.nights.push(1); p.modes.push(""); p.snotes.push(""); p.spots.push([]);
   return true;
 }
 function moveTripStop(p, i, j) {
   if (i === j) return;
-  for (const a of [p.stops, p.nights, p.modes]) a.splice(j, 0, a.splice(i, 1)[0]);
+  for (const a of [p.stops, p.nights, p.modes, p.snotes, p.spots]) a.splice(j, 0, a.splice(i, 1)[0]);
   // les trajets autour des étapes déplacées sont recalculés
   for (const k of [i, i + 1, j, j + 1]) if (k < p.modes.length) p.modes[k] = "";
 }
 function removeTripStop(p, i) {
-  for (const a of [p.stops, p.nights, p.modes]) a.splice(i, 1);
+  for (const a of [p.stops, p.nights, p.modes, p.snotes, p.spots]) a.splice(i, 1);
   if (i < p.modes.length) p.modes[i] = "";
 }
-function stopMenu(p, i) {
+// jours d'arrivée et de départ d'une étape (AAAA-MM-JJ), quand le trip a une date de départ
+function stopDays(p, i) {
+  if (!p.start) return null;
+  const d = new Date(p.start + "T12:00");
+  d.setDate(d.getDate() + d3.sum(p.nights.slice(0, i)));
+  const out = new Date(d); out.setDate(out.getDate() + Math.max(1, p.nights[i] || 0));
+  return { in: isoDay(d), out: isoDay(out) };
+}
+// liens de recherche d'hébergement, préremplis avec le lieu et les dates de l'étape
+function stayLinks(p, i) {
+  const id = p.stops[i], c = placeCountry(id);
+  const q = [placeName(id), c && !isCountry(id) ? byId.get(c)?.properties.n : ""].filter(Boolean).join(", ");
+  const d = stopDays(p, i), e = encodeURIComponent;
+  return [
+    ["Booking.com", "booking", `https://www.booking.com/searchresults.fr.html?ss=${e(q)}${d ? `&checkin=${d.in}&checkout=${d.out}` : ""}&group_adults=2&no_rooms=1`],
+    ["Airbnb", "airbnb", `https://www.airbnb.fr/s/${e(q)}/homes?adults=2${d ? `&checkin=${d.in}&checkout=${d.out}` : ""}`],
+    ["Google Hôtels", "google", `https://www.google.com/travel/search?q=${e("hôtels " + q)}${d ? `&checkin=${d.in}&checkout=${d.out}` : ""}`]
+  ];
+}
+// photos d'une étape : celles du site, sinon l'article Wikipédia de la ville, de la région ou du pays
+function stopPhotoKey(id) {
+  if (isSite(id)) return siteOfStop(id);
+  const c = placeCountry(id), cn = byId.get(c)?.properties.n || "";
+  return { id: "stop:" + id, n: placeName(id), lang: "fr", q: isCountry(id) ? placeName(id) : placeName(id) + " " + cn };
+}
+// Fiche d'une étape : photos, dates et nuits, notes, hébergement
+function stopSheet(p, i) {
+  document.querySelector(".ss-back")?.remove();
   const back = document.createElement("div");
-  back.className = "mp-back";
-  back.innerHTML = `<div class="card mp" role="dialog" aria-label="Étape ${i + 1}">
-    <h3>${i + 1}. ${esc(placeName(p.stops[i]))}</h3>
-    <div class="btns">
-      <button class="btn danger" data-mp="rm">Retirer cette étape</button>
-      <button class="btn" data-mp="cancel">Annuler</button>
-    </div></div>`;
+  back.className = "mp-back ss-back";
+  back.style.setProperty("--trip", p.color || TRIP_COLORS[0]);
   document.body.append(back);
-  const close = () => back.remove();
+  const id = p.stops[i];
+  let saveT = 0;
+  const close = () => { clearTimeout(saveT); commitTrip(); back.remove(); renderPlans(); };
+  const draw = () => {
+    const d = stopDays(p, i);
+    back.innerHTML = `<div class="card ss" role="dialog" aria-label="Étape ${i + 1} : ${esc(placeName(id))}">
+      <div class="ss-photo" id="ss-photo" hidden></div>
+      <button class="icon-btn ss-x" data-ss="close" aria-label="Fermer">✕</button>
+      <div class="ss-in">
+        <div class="ss-head"><span class="n">${i + 1}</span><span class="t"><b>${esc(placeName(id))}</b><small>${esc(placeSub(id) || "")}</small></span></div>
+        <div class="ss-when">
+          <span>📅 ${d ? esc(stopDates(p, i)) : "Ajoute une date de départ au trip pour voir les dates"}</span>
+          <span class="nights"><button data-ss="nt-" aria-label="Une nuit de moins" ${p.nights[i] ? "" : "disabled"}>−</button><span>${p.nights[i] ? plural(p.nights[i], "nuit", "nuits") : "0 nuit"}</span><button data-ss="nt+" aria-label="Une nuit de plus">+</button></span>
+        </div>
+        <label class="field">Notes<textarea id="ss-notes" placeholder="À faire, adresses, idées…">${esc(p.snotes[i] || "")}</textarea></label>
+        <h4>Spots et activités</h4>
+        <ul class="ss-spots">${p.spots[i].map((x, k) => `<li class="${x.done ? "done" : ""}">
+          <button class="ss-check" data-sp-done="${k}" aria-pressed="${x.done}" aria-label="${x.done ? "Pas encore fait" : "Fait"}">${x.done ? "✓" : ""}</button>
+          ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.n)}</a>` : `<span>${esc(x.n)}</span>`}
+          <button class="icon-btn" data-sp-rm="${k}" aria-label="Retirer ${esc(x.n)}">✕</button></li>`).join("")}</ul>
+        <form class="ss-add" id="ss-add"><input id="ss-spot" placeholder="Ajouter un spot ou une activité…" maxlength="140" enterkeyhint="done"><button class="btn small" aria-label="Ajouter">＋</button></form>
+        <div class="ss-sugg" id="ss-sugg" hidden></div>
+        ${p.nights[i] ? `<h4>Trouver un hébergement</h4>
+        <div class="ss-stays">${stayLinks(p, i).map(([n, k, url]) => `<a class="ss-stay ${k}" href="${esc(url)}" target="_blank" rel="noopener"><b>${n}</b><span>${esc(placeName(id))}${d ? " · " + esc(stopDates(p, i)) : ""}</span><i>›</i></a>`).join("")}</div>` : ""}
+        <div class="btns"><button class="btn danger" data-ss="rm">Retirer cette étape</button></div>
+      </div></div>`;
+    back.querySelector('[data-ss="close"]').onclick = close;
+    back.querySelectorAll('[data-ss^="nt"]').forEach(b => b.onclick = () => {
+      p.nights[i] = Math.max(0, Math.min(99, p.nights[i] + (b.dataset.ss === "nt+" ? 1 : -1)));
+      p.snotes[i] = $("ss-notes").value; commitTrip(); draw();
+    });
+    const keep = () => { p.snotes[i] = $("ss-notes").value; commitTrip(); const y = back.querySelector(".ss").scrollTop; draw(); back.querySelector(".ss").scrollTop = y; };
+    $("ss-add").onsubmit = e => {
+      e.preventDefault();
+      const n = $("ss-spot").value.trim();
+      if (!n) return;
+      p.spots[i].push({ n, done: false, url: "", img: "" }); keep();
+      $("ss-spot").focus();
+    };
+    back.querySelectorAll("[data-sp-done]").forEach(b => b.onclick = () => { const x = p.spots[i][+b.dataset.spDone]; x.done = !x.done; keep(); });
+    back.querySelectorAll("[data-sp-rm]").forEach(b => b.onclick = () => { p.spots[i].splice(+b.dataset.spRm, 1); keep(); });
+    showSuggestions(p, i, keep);
+    $("ss-notes").oninput = e => { p.snotes[i] = e.target.value; clearTimeout(saveT); saveT = setTimeout(commitTrip, 600); };
+    back.querySelector('[data-ss="rm"]').onclick = e => {
+      const b = e.currentTarget;
+      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer : retirer l'étape"; return; }
+      back.remove(); removeTripStop(p, i); commitTrip(); renderPlans(); toast("Étape retirée", 1200);
+    };
+    showStopPhoto(id);
+  };
   back.onclick = e => { if (e.target === back) close(); };
-  back.querySelector('[data-mp="cancel"]').onclick = close;
-  back.querySelector('[data-mp="rm"]').onclick = () => { close(); removeTripStop(p, i); commitTrip(); renderPlans(); toast("Étape retirée", 1200); };
+  draw();
+}
+// Idées autour de l'étape : sites UNESCO proches, puis les lieux qui ont un article Wikipédia avec photo
+const suggCache = new Map();
+async function stopSuggestions(id) {
+  if (suggCache.has(id)) return suggCache.get(id);
+  const r = (async () => {
+    const [lon, lat] = centroid(id), out = [];
+    for (const st of sites) if (d3.geoDistance([st.lon, st.lat], [lon, lat]) * 6371 < (isCity(id) || isSite(id) ? 40 : 150))
+      out.push({ n: st.n, img: "", url: st.wiki ? "https://fr.wikipedia.org/wiki/" + encodeURIComponent(st.wiki) : "", kind: st.wonder ? "7 merveilles" : "Patrimoine mondial", site: st });
+    if (isCountry(id)) return out;
+    const d = await fetch("https://fr.wikipedia.org/w/api.php?" + new URLSearchParams({ format: "json", origin: "*", action: "query",
+      generator: "geosearch", ggscoord: lat + "|" + lon, ggsradius: "10000", ggslimit: "40",
+      prop: "pageimages|description|info", piprop: "thumbnail", pithumbsize: "400", inprop: "url" })).then(r => r.json()).catch(() => null);
+    const skip = /commune|ville|village|douar|localité|municipalité|quartier|arrondissement|gare|aéroport|route|autoroute|rue|école|lycée|université|hôpital|club|stade|entreprise|circonscription|province|région|département|canton/i;
+    const home = norm(placeName(id));
+    for (const pg of Object.values(d?.query?.pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0))) {
+      if (!pg.thumbnail || norm(pg.title) === home || skip.test(pg.description || "")) continue;
+      if (out.some(o => norm(o.n) === norm(pg.title))) continue;
+      out.push({ n: pg.title, img: pg.thumbnail.source, url: pg.fullurl, kind: pg.description || "" });
+      if (out.length >= 14) break;
+    }
+    return out;
+  })().catch(() => []);
+  suggCache.set(id, r);
+  return r;
+}
+async function showSuggestions(p, i, keep) {
+  const box = $("ss-sugg"), id = p.stops[i];
+  if (!box) return;
+  const all = await stopSuggestions(id);
+  if ($("ss-sugg") !== box) return;
+  const have = new Set(p.spots[i].map(x => norm(x.n)));
+  const list = all.filter(x => !have.has(norm(x.n)));
+  if (!list.length) return;
+  box.innerHTML = `<p class="small">Idées autour de ${esc(placeName(id))}</p><div class="ss-cards">${list.map((x, k) => `
+    <div class="ss-card">${x.img ? `<img src="${esc(x.img)}" alt="" loading="lazy">` : `<div class="ss-noimg">${x.site ? (x.site.wonder ? "★" : "◆") : "📍"}</div>`}
+      <button class="ss-plus" data-sg="${k}" aria-label="Ajouter ${esc(x.n)}">＋</button>
+      <small>${esc(x.kind)}</small>${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.n)}</a>` : `<b>${esc(x.n)}</b>`}</div>`).join("")}</div>`;
+  box.hidden = false;
+  box.querySelectorAll("img").forEach(img => img.onerror = () => img.remove());
+  box.querySelectorAll("[data-sg]").forEach(b => b.onclick = () => {
+    const x = list[+b.dataset.sg];
+    p.spots[i].push({ n: x.n, done: false, url: x.url || "", img: x.img || "" });
+    keep(); toast(x.n + " ajouté ✓", 1200);
+  });
+}
+async function showStopPhoto(id) {
+  const box = $("ss-photo");
+  if (!box) return;
+  const photo = await fetchPhoto(stopPhotoKey(id));
+  if (!photo || $("ss-photo") !== box) return;
+  const many = photo.list.length > 1;
+  box.innerHTML = `<div class="slides">${photo.list.map((src, i) => `<img src="${esc(src)}" alt="${esc(placeName(id))} (${i + 1})" loading="${i ? "lazy" : "eager"}">`).join("")}</div>
+    ${many ? `<div class="dots">${photo.list.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div>` : ""}
+    <a href="${esc(photo.url)}" target="_blank" rel="noopener">Photos : Wikipédia · ${esc(photo.title)}</a>`;
+  box.hidden = false;
+  const slides = box.querySelector(".slides");
+  slides.querySelectorAll("img").forEach(img => img.onerror = () => { img.remove(); if (!slides.children.length) box.hidden = true; });
+  if (many) slides.onscroll = () => {
+    const k = Math.round(slides.scrollLeft / slides.clientWidth);
+    box.querySelectorAll(".dots i").forEach((d, j) => d.classList.toggle("on", k === j));
+  };
 }
 function drawTripMap(p0) {
   // l'étape en cours de choix apparaît déjà sur la carte, avec son trajet
@@ -1707,7 +1845,7 @@ function drawTripMap(p0) {
   const marks = g.selectAll(".tm-mark").data(P.map((xy, j) => ({ x: xy[0], y: xy[1], n: j + 1, i: ids[j], name: placeName(p.stops[ids[j]]) })))
     .join(enter => { const m = enter.append("g").attr("class", "tm-mark"); m.append("circle").attr("r", 11); m.append("text").attr("class", "num"); m.append("text").attr("class", "lbl").attr("x", 15).attr("dy", "0.35em"); return m; })
     .classed("pending", d => pend && d.i === p0.stops.length)
-    .on("click", (e, d) => { e.stopPropagation(); if (d.i < p0.stops.length) stopMenu(p0, d.i); });
+    .on("click", (e, d) => { e.stopPropagation(); if (d.i < p0.stops.length) stopSheet(p0, d.i); });
   marks.select(".num").text(d => d.n);
   marks.select(".lbl").text(d => d.name.length > 18 ? d.name.slice(0, 17) + "…" : d.name);
   const place2 = kk => {

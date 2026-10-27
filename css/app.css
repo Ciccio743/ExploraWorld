@@ -458,3 +458,54 @@ h2.grow { flex: 1 1 auto; min-width: 0; }
 .tm-mark.pending .num { fill: var(--trip, var(--me)); }
 /* iPhone : sous 16 px, toucher un champ zoome toute la page et la décale */
 input, textarea, select { font-size: 16px !important; }
+/* fiche d'une étape */
+.ss-back { align-items: flex-end; padding: 0; z-index: 70; }
+.ss { position: relative; width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 0; border-radius: 22px 22px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.ss-in { padding: 16px 18px 0; display: grid; gap: 12px; }
+.ss-in h4 { margin: 8px 0 0; font: 800 17px/1.2 var(--f-display); }
+.ss-x { position: absolute; top: 10px; right: 10px; z-index: 2; width: 36px; height: 36px; border-radius: 50%; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); color: var(--ink); }
+.ss-photo { margin: 0; }
+.ss-photo .slides { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+.ss-photo .slides::-webkit-scrollbar { display: none; }
+.ss-photo img { flex: 0 0 100%; width: 100%; height: 220px; object-fit: cover; background: var(--fog); scroll-snap-align: center; }
+.ss-photo .dots { display: flex; justify-content: center; gap: 5px; margin-top: 6px; }
+.ss-photo .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--fog-line); }
+.ss-photo .dots i.on { background: var(--trip, var(--found)); }
+.ss-photo a { display: block; padding: 2px 18px 0; font-size: 11px; color: var(--ink-2); text-decoration: none; }
+.ss-head { display: flex; align-items: center; gap: 12px; padding-right: 40px; }
+.ss-photo:not([hidden]) ~ .ss-in .ss-head { padding-right: 0; }
+.ss-head .n { width: 32px; height: 32px; flex: none; border-radius: 50%; background: var(--trip, var(--me)); color: #fff; display: grid; place-items: center; font-weight: 700; }
+.ss-head .t { display: grid; min-width: 0; }
+.ss-head b { font: 800 22px/1.15 var(--f-display); }
+.ss-head small { color: var(--ink-2); font-size: 13px; }
+.ss-when { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); font-size: 14px; }
+.ss-when .nights { display: inline-flex; align-items: center; gap: 8px; }
+.ss-when .nights button { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 16px/1 var(--f-body); }
+.ss-when .nights button:disabled { opacity: .35; }
+.ss textarea { min-height: 90px; }
+.ss-spots { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ss-spots:empty { display: none; }
+.ss-spots li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 4px 6px 8px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
+.ss-spots li a, .ss-spots li span { color: var(--ink); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-spots li.done a, .ss-spots li.done span { text-decoration: line-through; color: var(--ink-2); }
+.ss-check { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--trip, var(--me)); background: transparent; color: #fff; font-weight: 800; padding: 0; }
+.ss-check[aria-pressed="true"] { background: var(--trip, var(--me)); }
+.ss-add { display: flex; gap: 8px; }
+.ss-add input { flex: 1; min-width: 0; font: inherit; color: var(--ink); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+.ss-sugg .small { margin: 0 0 6px; }
+.ss-cards { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; margin: 0 -18px; padding: 0 18px 4px; }
+.ss-cards::-webkit-scrollbar { display: none; }
+.ss-card { position: relative; flex: 0 0 140px; display: grid; gap: 2px; align-content: start; }
+.ss-card img, .ss-noimg { width: 140px; height: 100px; object-fit: cover; border-radius: 14px; background: var(--fog); display: grid; place-items: center; font-size: 26px; color: var(--trip, var(--me)); }
+.ss-card small { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+.ss-card a, .ss-card b { font-size: 13px; font-weight: 700; color: var(--ink); text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ss-plus { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(255,255,255,.92); color: #111; font-size: 17px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.ss-stays { display: grid; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.ss-stay { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px; color: var(--ink); text-decoration: none; background: var(--bg); }
+.ss-stay + .ss-stay { border-top: 1px solid var(--line); }
+.ss-stay b { font-size: 15px; }
+.ss-stay.booking b { color: #2f6fe4; } .ss-stay.airbnb b { color: #ff385c; } .ss-stay.google b { color: #34a853; }
+.ss-stay span { font-size: 12px; color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-stay i { font-style: normal; color: var(--ink-2); font-size: 20px; }
+.istop .t { cursor: pointer; }
+.istop .open-hint { display: block; font-style: normal; font-size: 12px; color: var(--trip, var(--me)); font-weight: 600; margin-top: 2px; }
