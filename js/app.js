@@ -1671,12 +1671,15 @@ function stopSheet(p, i) {
 // (Wikidata, classés par nombre d'articles Wikipédia), et en dernier recours les articles géolocalisés proches
 const suggCache = new Map();
 // types Wikidata qui ne sont pas des choses à voir : villes, quartiers, gares, écoles, routes, entreprises…
-const NOT_SPOTS = "Q515 Q1549591 Q3957 Q532 Q5084 Q123705 Q2983893 Q15284 Q484170 Q747074 Q1637706 Q200250 Q5119 Q6256 Q3624078 Q55488 Q1248784 Q644371 Q3914 Q3918 Q9842 Q159334 Q16917 Q34442 Q79007 Q4830453 Q43229 Q476028 Q1093829 Q10864048 Q13220204 Q1907114 Q2221906 Q15640612 Q1195098 Q6881511 Q891723 Q7930989 Q50330360 Q17343829 Q928830 Q4022 Q2085381";
-async function wikidataSpots(lon, lat, km) {
+const NOT_SPOTS = "Q515 Q1549591 Q3957 Q532 Q5084 Q123705 Q2983893 Q15284 Q484170 Q747074 Q1637706 Q200250 Q5119 Q6256 Q3624078 Q55488 Q1248784 Q644371 Q3914 Q3918 Q9842 Q159334 Q16917 Q34442 Q79007 Q4830453 Q43229 Q476028 Q1093829 Q10864048 Q13220204 Q1907114 Q2221906 Q15640612 Q1195098 Q6881511 Q891723 Q7930989 Q50330360 Q17343829 Q928830 Q4022 Q2085381 Q23058 Q15925165 Q484652 Q163740 Q31855 Q327333 Q7210356 Q2659904 Q245065 Q1194093";
+// ce qui se visite : monuments protégés, ou un type « à voir » (musée, église, château, parc, lac, plage…)
+const SPOT_TYPES = "Q570116 Q33506 Q207694 Q16970 Q2977 Q32815 Q23413 Q16560 Q4989906 Q174782 Q483453 Q23397 Q40080 Q8502 Q1107656 Q167346 Q676050 Q15243209 Q6017969 Q12280 Q12518 Q37654 Q43501 Q34038 Q44539 Q34627 Q839954 Q194195 Q153562 Q24354 Q46169 Q23442 Q25391 Q43483 Q8514 Q22698 Q1785071 Q57821 Q35509 Q4421";
+async function wikidataSpots(lon, lat, km, strict) {
   const q = `SELECT ?item ?label ?labelEn ?desc ?img ?art ?links WHERE {
   SERVICE wikibase:around { ?item wdt:P625 ?loc . bd:serviceParam wikibase:center "Point(${lon} ${lat})"^^geo:wktLiteral ; wikibase:radius "${km}" . }
   ?item wikibase:sitelinks ?links . FILTER(?links >= 4)
   FILTER NOT EXISTS { ?item wdt:P31 ?t . VALUES ?t { ${NOT_SPOTS.split(" ").map(x => "wd:" + x).join(" ")} } }
+  ${strict ? `FILTER EXISTS { { ?item wdt:P1435 [] } UNION { ?item wdt:P31/wdt:P279* ?tc . VALUES ?tc { ${SPOT_TYPES.split(" ").map(x => "wd:" + x).join(" ")} } } }` : ""}
   OPTIONAL { ?item wdt:P18 ?img }
   OPTIONAL { ?art schema:about ?item ; schema:isPartOf <https://fr.wikipedia.org/> }
   OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "fr") }
@@ -1717,8 +1720,11 @@ async function stopSuggestions(id) {
     const local = isCountry(id) ? sitesBy.get(id) || [] : sites.filter(st => d3.geoDistance([st.lon, st.lat], [lon, lat]) * 6371 < (near ? 40 : 120));
     for (const st of local) add({ n: st.n, img: "", url: st.wiki ? "https://fr.wikipedia.org/wiki/" + encodeURIComponent(st.wiki) : "", kind: st.wonder ? "7 merveilles du monde" : "Patrimoine mondial UNESCO", site: st });
     if (isCountry(id)) return out;
-    const famous = await wikidataSpots(lon, lat, near ? 15 : 60);
-    (famous || []).forEach(add);
+    const km = near ? 15 : 60;
+    // seulement les lieux touristiques ; la liste large ne sert que si la recherche stricte n'a rien donné
+    const tour = await wikidataSpots(lon, lat, km, true);
+    (tour || []).forEach(add);
+    if (!tour || tour.length < 3) (await wikidataSpots(lon, lat, km, false) || []).forEach(add);
     if (out.length < 6) (await wikiNearby(lon, lat, home)).forEach(add);
     // une photo pour les sites UNESCO, quand Wikipédia en a une
     await Promise.all(out.filter(x => x.site && !x.img).slice(0, 8).map(async x => { const ph = await fetchPhoto(x.site); if (ph) x.img = ph.list[0]; }));
