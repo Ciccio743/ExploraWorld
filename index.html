@@ -20,7 +20,7 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=48">
+<link rel="stylesheet" href="css/app.css?v=49">
 </head>
 <body>
 <div id="app">
@@ -36,6 +36,9 @@
         </div>
       </div>
       <div class="fabs">
+        <button class="fab fab-photo" id="btn-photos" title="Accrocher des photos sur la carte" aria-label="Accrocher des photos sur la carte">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </button>
         <button class="fab" id="btn-locate" title="Ma position en direct" aria-label="Ma position en direct">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
         </button>
@@ -91,11 +94,8 @@
             <button data-mapstyle="real">Réaliste</button>
           </div>
           <p class="small" style="margin-top:10px">Réaliste : vue satellite avec les reliefs (il faut une connexion).</p>
-          <div class="seg" role="group" aria-label="Couleurs des pays" style="margin-top:14px">
-            <button data-colors="multi">🎨 Multicolore</button>
-            <button data-colors="gold">Tout en or</button>
-          </div>
-          <p class="small" style="margin-top:10px">Tu peux aussi choisir la couleur de chaque pays : ouvre le pays sur la carte, puis ⌃.</p>
+          <p class="small" style="margin-top:10px">🎨 Chaque pays a sa couleur. Pour la changer (or compris) : ouvre le pays sur la carte, puis ⌃.</p>
+          <label class="switch" style="margin-top:12px"><input type="checkbox" id="set-pins">Afficher mes photos accrochées sur la carte</label>
         </div>
         <div class="block">
           <h3>Position</h3>
@@ -141,6 +141,6 @@
 
 <script src="vendor/d3.min.js"></script>
 <script src="vendor/topojson-client.min.js"></script>
-<script src="js/app.js?v=48"></script>
+<script src="js/app.js?v=49"></script>
 </body>
 </html>

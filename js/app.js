@@ -52,13 +52,16 @@ let iso2 = {};
 // drapeau emoji à partir du code ISO à 2 lettres
 const flag = code => iso2[code] ? [...iso2[code]].map(ch => String.fromCodePoint(0x1F1A5 + ch.charCodeAt(0))).join("") : "";
 // c, r : pays et régions visités (id -> date) · w : envies (id de pays ou de région -> date) · plans : projets de voyage
-let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {} };
+let state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [] };
 // Couleurs de la carte : chaque pays visité a sa couleur (choisie, sinon attribuée), ou tout en or
-const PALETTE = ["#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
+const PALETTE = ["#f5b83d", "#ff6b6b", "#ff922b", "#fcc419", "#51cf66", "#20c997", "#22b8cf", "#339af0", "#5c7cfa", "#845ef7", "#cc5de8", "#f06595", "#94d82d"];
 const cleanColors = o => Object.fromEntries(Object.entries(o && typeof o === "object" ? o : {}).filter(([k, v]) => /^[A-Z0-9-]{2,8}$/.test(k) && PALETTE.includes(v)));
 const autoColor = new Map();
 // Journal de chaque pays : { cover, entries: [{ id, d, t, x, e, ph: [ids des photos] }] } ; les photos sont dans IndexedDB
 const MOODS = ["😍", "😀", "😌", "🤩", "😴", "🥵", "🥶", "🍽️", "🏖️", "🏔️", "🚶", "🎉"];
+// Photos accrochées sur la carte : { id, ph (photo sur l'appareil), lon, lat, d (jour de la photo) }
+const cleanPins = l => (Array.isArray(l) ? l : []).filter(x => x && x.ph && isFinite(x.lon) && isFinite(x.lat)).slice(0, 3000)
+  .map(x => ({ id: String(x.id || x.ph).slice(0, 24), ph: String(x.ph).slice(0, 24), lon: +(+x.lon).toFixed(5), lat: +(+x.lat).toFixed(5), d: /^\d{4}-\d{2}-\d{2}$/.test(x.d) ? x.d : "" }));
 function cleanJournal(o) {
   const out = {};
   for (const [c, v] of Object.entries(o && typeof o === "object" ? o : {})) {
@@ -71,7 +74,7 @@ function cleanJournal(o) {
   }
   return out;
 }
-const countryColor = code => state.k[code] || (store.get("explora-colors") !== "gold" ? autoColor.get(code) : null) || null;
+const countryColor = code => state.k[code] || autoColor.get(code) || null;
 // style de carte : « classic » (dessinée) ou « real » (satellite avec les reliefs)
 const REAL = (() => { try { return localStorage.getItem("explora-mapstyle") === "real"; } catch (e) { return false; } })();
 let current = null, selected = null, tab = "map", tripView = "visited";
@@ -113,13 +116,13 @@ function cleanPlans(list) {
   });
 }
 function serialize() {
-  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, t: Date.now() };
+  return { v: 3, c: Object.fromEntries(state.c), r: Object.fromEntries(state.r), w: Object.fromEntries(state.w), u: Object.fromEntries(state.u), plans: state.plans, k: state.k, j: state.j, p: state.p, t: Date.now() };
 }
 let VIEW = null; // carte d'un ami ouverte par un lien : rien n'est enregistré
 function save() { if (!VIEW) store.set(LS, JSON.stringify(serialize())); }
 try {
   const d = JSON.parse(store.get(LS) || "null");
-  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j) };
+  if (d) state = { c: toMap(d.c), r: toMap(d.r), w: toMap(d.w), u: toMap(d.u), plans: cleanPlans(d.plans), k: cleanColors(d.k), j: cleanJournal(d.j), p: cleanPins(d.p) };
 } catch (e) {}
 quick = store.get("explora-quick") === "1";
 // les premières versions dataient chaque visite du jour du marquage : on efface ces dates automatiques
@@ -180,7 +183,7 @@ async function load() {
   const shared = location.hash.startsWith("#carte=") ? await unpackMap(location.hash.slice(7)).catch(() => null) : null;
   if (shared) {
     VIEW = shared;
-    state = { c: new Map(shared.c.map(c => [c, 0])), r: new Map(shared.r.map(r => [r, 0])), w: new Map(), u: new Map(), plans: [], k: shared.k, j: {} };
+    state = { c: new Map(shared.c.map(c => [c, 0])), r: new Map(shared.r.map(r => [r, 0])), w: new Map(), u: new Map(), plans: [], k: shared.k, j: {}, p: [] };
   }
   migrate(merged, split);
   countries = topojson.feature(world, world.objects.countries).features;
@@ -190,8 +193,9 @@ async function load() {
   for (const f of [...countries].sort((a, b) => a.id.localeCompare(b.id))) {
     const used = new Set((neighbors.get(f.id) || []).map(n => autoColor.get(n)));
     let h = 0; for (const ch of f.id) h = (h * 31 + ch.charCodeAt(0)) % 997;
-    let c = PALETTE[h % PALETTE.length];
-    for (let i = 0; used.has(c) && i < PALETTE.length; i++) c = PALETTE[(h + i) % PALETTE.length];
+    const AUTO = PALETTE.slice(1); // l'or reste au choix, pays par pays
+    let c = AUTO[h % AUTO.length];
+    for (let i = 0; used.has(c) && i < AUTO.length; i++) c = AUTO[(h + i) % AUTO.length];
     autoColor.set(f.id, c);
   }
   for (const f of countries) byId.set(f.id, f);
@@ -358,6 +362,7 @@ const gSel = root.append("g");
 const gRoute = root.append("g");
 const gSites = root.append("g");
 const gCities = root.append("g");
+const gPins = root.append("g").attr("class", "pins");
 const gMe = root.append("g");
 const projection = REAL ? d3.geoMercator() : d3.geoNaturalEarth1();
 document.body.classList.toggle("real", REAL);
@@ -372,10 +377,11 @@ const zoom = d3.zoom().scaleExtent([1, 600]).on("zoom", e => {
   if (routePlan) sizeStops();
   gCities.selectAll(".city").attr("transform", cityTransform);
   gSites.selectAll(".site").attr("transform", siteTransform);
+  gPins.selectAll(".pin-g").attr("transform", pinTransform);
   gBase.selectAll(".ocean-name").attr("transform", oceanTransform).style("opacity", k > 5 ? 0 : null);
   tip.hidden = true;
   if (REAL && !tileRaf) tileRaf = requestAnimationFrame(() => { tileRaf = 0; drawTiles(); });
-}).on("end", () => { drawCities(); drawTiles(); });
+}).on("end", () => { drawCities(); drawTiles(); drawPins(); });
 // Carte réaliste : images satellite avec le relief (NASA Blue Marble, puis Sentinel-2 en zoomant fort)
 let tileRaf = 0;
 const tileUrl = (z, x, y) => z <= 8
@@ -472,6 +478,7 @@ function drawMap() {
     .order().raise();
   gSites.selectAll(".wonder").raise();
   drawRoute();
+  drawPins();
 }
 
 function drawRoute() {
@@ -1023,14 +1030,14 @@ function renderSheet() {
     sheet.innerHTML = `
       <h2>Remplis ta carte</h2>
       <p class="hint">Touche un pays pour zoomer dedans, puis choisis les départements, états ou régions où tu es allé.</p>
-      <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:${store.get("explora-colors") === "gold" ? "var(--found)" : "conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"}"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
+      <div class="legend"><span><b style="background:var(--fog)"></b>Pas visité</span><span><b style="background:conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div>`;
   } else {
     const n = state.c.size, next = MILESTONES.find(m => m > n) || 195, prev = [...MILESTONES].reverse().find(m => m <= n) || 0;
     sheet.innerHTML = `<div class="welcome">
       <div class="row between"><p class="w-big"><b>${n}</b> pays sur 195</p><p class="w-next">${n < 195 ? `Prochain palier : ${next}` : "Le monde entier !"}</p></div>
       <div class="bar w-bar"><i style="width:${n >= 195 ? 100 : (n - prev) / (next - prev) * 100}%"></i></div>
       <div class="row between"><p class="hint" style="margin:0">Touche un pays pour zoomer dedans.</p>
-      <div class="legend" style="margin:0"><span><b style="background:${store.get("explora-colors") === "gold" ? "var(--found)" : "conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"}"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div></div>`;
+      <div class="legend" style="margin:0"><span><b style="background:conic-gradient(#ff6b6b, #fcc419, #51cf66, #339af0, #cc5de8, #ff6b6b)"></b>Visité</span><span><b style="background:var(--wish-soft)"></b>Envie</span></div></div></div>`;
   }
   document.documentElement.style.setProperty("--sheet-h", document.querySelector(".sheet .card").offsetHeight + 12 + "px");
 }
@@ -1267,7 +1274,7 @@ function journalSheet(code) {
     back.innerHTML = `<div class="card ss jr" role="dialog" aria-label="Journal : ${esc(name)}">
       <button class="icon-btn ss-x" data-j="close" aria-label="Fermer">✕</button>
       ${cover ? `<div class="jr-cover"><img data-ph="${cover}" alt=""><div class="jr-title"><b>${flag(code)} ${esc(name)}</b><small>Mon journal de voyage</small></div></div>`
-        : `<div class="ss-photo" id="ss-photo" hidden></div>`}
+        : ""}
       <div class="ss-in">
         ${cover ? "" : `<div class="ss-head"><span class="n">${flag(code) || "•"}</span><span class="t"><b>${esc(name)}</b><small>Mon journal de voyage</small></span></div>`}
         <div class="jr-stats">
@@ -1287,7 +1294,6 @@ function journalSheet(code) {
           </article>`).join("")}</div>
       </div></div>`;
     fillPhotos(back);
-    if (!cover) showPhotoInto(code);
     back.querySelector('[data-j="close"]').onclick = close;
     const nw = back.querySelector('[data-j="new"]');
     if (nw) nw.onclick = () => { edit = { id: "e" + Date.now().toString(36), d: isoDay(new Date()), t: "", x: "", e: "", ph: [], added: [], isNew: true }; draw(); };
@@ -1361,6 +1367,182 @@ async function showPhotoInto(code) {
     box.querySelectorAll(".dots i").forEach((d, j) => d.classList.toggle("on", k === j));
   };
 }
+
+/* ---------- Mur de photos : les photos accrochées sur la carte ---------- */
+// Lieu et date lus dans la photo (EXIF) quand le téléphone les a gardés ; sinon on touche la carte pour la poser.
+function readExif(buf) {
+  try {
+    const v = new DataView(buf);
+    if (v.getUint16(0) !== 0xFFD8) return {};
+    for (let o = 2; o + 10 < v.byteLength;) {
+      const m = v.getUint16(o), len = v.getUint16(o + 2);
+      if (m === 0xFFE1 && v.getUint32(o + 4) === 0x45786966) return parseTiff(v, o + 10);
+      if ((m & 0xFF00) !== 0xFF00 || m === 0xFFDA) break;
+      o += 2 + len;
+    }
+  } catch (e) {}
+  return {};
+}
+function parseTiff(v, t) {
+  const le = v.getUint16(t) === 0x4949;
+  const u16 = p => v.getUint16(p, le), u32 = p => v.getUint32(p, le);
+  const ifd = p => { const n = u16(p), out = {}; for (let i = 0; i < n; i++) { const e = p + 2 + i * 12; out[u16(e)] = e; } return out; };
+  const rat = p => u32(p) / (u32(p + 4) || 1);
+  const ascii = e => { const cnt = u32(e + 4), off = cnt > 4 ? t + u32(e + 8) : e + 8; let r = ""; for (let i = 0; i < cnt - 1; i++) r += String.fromCharCode(v.getUint8(off + i)); return r; };
+  const res = {}, i0 = ifd(t + u32(t + 4));
+  if (i0[0x8769]) { const ex = ifd(t + u32(i0[0x8769] + 8)); if (ex[0x9003]) res.date = ascii(ex[0x9003]); }
+  if (!res.date && i0[0x0132]) res.date = ascii(i0[0x0132]);
+  if (i0[0x8825]) {
+    const g = ifd(t + u32(i0[0x8825] + 8));
+    const dms = e => { const off = t + u32(e + 8); return rat(off) + rat(off + 8) / 60 + rat(off + 16) / 3600; };
+    if (g[2] && g[4]) {
+      let lat = dms(g[2]), lon = dms(g[4]);
+      if (g[1] && String.fromCharCode(v.getUint8(g[1] + 8)) === "S") lat = -lat;
+      if (g[3] && String.fromCharCode(v.getUint8(g[3] + 8)) === "W") lon = -lon;
+      if (isFinite(lat) && isFinite(lon) && (lat || lon) && Math.abs(lat) <= 90) { res.lat = lat; res.lon = lon; }
+    }
+  }
+  const m = /^(\d{4}):(\d{2}):(\d{2})/.exec(res.date || "");
+  res.day = m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  return res;
+}
+let placing = null; // photos qui attendent qu'on touche la carte pour les poser
+let spider = null;  // groupe de photos déplié en toile d'araignée
+const pinsShown = () => store.get("explora-pins") !== "off";
+const pinTransform = d => `translate(${d.x},${d.y}) scale(${1 / k})`;
+const tilt = id => { let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) % 101; return (h % 15) - 7; };
+async function pickPinPhotos() {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*"; inp.multiple = true;
+  inp.onchange = async () => {
+    const files = [...inp.files].slice(0, 60);
+    if (!files.length) return;
+    toast(`Préparation de ${plural(files.length, "photo", "photos")}…`, 1500);
+    const got = [], waiting = [];
+    for (const f of files) {
+      const ex = readExif(await f.slice(0, 256 * 1024).arrayBuffer().catch(() => new ArrayBuffer(0)));
+      const [ph] = await addPhotos([f]).catch(() => []);
+      if (!ph) continue;
+      const pin = { id: ph, ph, lon: ex.lon, lat: ex.lat, d: ex.day || "" };
+      (ex.lat !== undefined ? got : waiting).push(pin);
+    }
+    if (got.length) { state.p.push(...cleanPins(got)); save(); drawPins(); }
+    if (waiting.length) {
+      placing = waiting;
+      showPlacing();
+    } else if (got.length) {
+      toast(`${plural(got.length, "photo accrochée", "photos accrochées")} à l'endroit où ${got.length > 1 ? "elles ont été prises" : "elle a été prise"} 📍`, 2600);
+      fitPins(got);
+    } else toast("Impossible d'ajouter ces photos");
+  };
+  inp.click();
+}
+function showPlacing() {
+  document.querySelector(".place-bar")?.remove();
+  const b = document.createElement("div");
+  b.className = "place-bar card";
+  b.innerHTML = `<b>📍 Touche la carte</b><span>là où ${placing.length > 1 ? `tu as pris ces ${placing.length} photos` : "tu as pris cette photo"}</span><button class="btn small" id="pl-cancel">Annuler</button>`;
+  document.body.append(b);
+  $("pl-cancel").onclick = () => { dropPhotos(placing.map(p => p.ph)); placing = null; b.remove(); };
+}
+function fitPins(list) {
+  const P = list.map(p => projection([p.lon, p.lat]));
+  const b = [[d3.min(P, d => d[0]) - 30, d3.min(P, d => d[1]) - 30], [d3.max(P, d => d[0]) + 30, d3.max(P, d => d[1]) + 30]];
+  fitBounds(b, 700);
+}
+// en capture : poser les photos en attente, ou replier la toile, avant les autres actions de la carte
+svg.node().addEventListener("click", e => {
+  if (placing) {
+    e.stopPropagation(); e.preventDefault();
+    const t = d3.zoomTransform(svg.node()), [x, y] = d3.pointer(e, svg.node());
+    const ll = projection.invert(t.invert([x, y]));
+    if (!ll || !isFinite(ll[0])) return;
+    state.p.push(...cleanPins(placing.map(p => ({ ...p, lon: ll[0], lat: ll[1] }))));
+    const n = placing.length;
+    placing = null; document.querySelector(".place-bar")?.remove();
+    save(); drawPins();
+    toast(`${plural(n, "photo accrochée", "photos accrochées")} ✓`, 1600);
+    return;
+  }
+  if (spider && !e.target.closest(".pin-g")) { e.stopPropagation(); spider = null; drawPins(); }
+}, true);
+function drawPins() {
+  const list = pinsShown() && !VIEW ? state.p : [];
+  // photos proches à l'écran regroupées en une pile
+  const r = 46 / k, groups = [];
+  for (const p of list) {
+    const [x, y] = projection([p.lon, p.lat]);
+    const g = groups.find(o => Math.abs(o.x - x) < r && Math.abs(o.y - y) < r);
+    if (g) g.items.push(p); else groups.push({ x, y, items: [p] });
+  }
+  for (const g of groups) { g.key = g.items[0].id; g.items.sort((a, b) => (b.d || "").localeCompare(a.d || "")); }
+  const spun = spider && groups.find(g => g.key === spider);
+  if (spider && !spun) spider = null;
+  const nodes = [];
+  for (const g of groups) {
+    if (g === spun) {
+      // toile d'araignée : les photos en cercle (en spirale si beaucoup), reliées au point par un fil
+      const n = g.items.length;
+      g.items.forEach((p, i) => {
+        const a = (n <= 8 ? i / n : i * .55) * 2 * Math.PI - Math.PI / 2;
+        const R = (n <= 8 ? 78 : 62 + i * 9) / k;
+        nodes.push({ id: "s" + p.id, x: g.x + Math.cos(a) * R, y: g.y + Math.sin(a) * R, cx: g.x, cy: g.y, p, n: 1, open: true });
+      });
+      nodes.push({ id: "c" + g.key, x: g.x, y: g.y, center: true });
+    } else nodes.push({ id: "g" + g.key, x: g.x, y: g.y, p: g.items[0], n: g.items.length, key: g.key });
+  }
+  gPins.selectAll(".pin-line").data(nodes.filter(d => d.open), d => d.id).join("line").attr("class", "pin-line")
+    .attr("x1", d => d.cx).attr("y1", d => d.cy).attr("x2", d => d.x).attr("y2", d => d.y);
+  const sel = gPins.selectAll(".pin-g").data(nodes, d => d.id).join(enter => {
+    const m = enter.append("g").attr("class", d => "pin-g" + (d.center ? " pin-center" : ""));
+    m.filter(d => d.center).append("circle").attr("r", 6);
+    const ph = m.filter(d => !d.center).append("g").attr("class", "polaroid").attr("transform", d => `rotate(${tilt(d.p.id)})`);
+    ph.filter(d => d.n > 1).append("rect").attr("class", "pl-back").attr("x", -25).attr("y", -27).attr("width", 50).attr("height", 58).attr("transform", "rotate(9)");
+    ph.append("rect").attr("class", "pl-frame").attr("x", -25).attr("y", -27).attr("width", 50).attr("height", 58);
+    ph.append("image").attr("x", -21).attr("y", -23).attr("width", 42).attr("height", 42).attr("preserveAspectRatio", "xMidYMid slice")
+      .each(function (d) { photoURL(d.p.ph).then(u => { if (u) this.setAttribute("href", u); }); });
+    ph.append("circle").attr("class", "pl-pin").attr("cy", -27).attr("r", 4);
+    const badge = m.filter(d => d.n > 1).append("g").attr("class", "pl-count").attr("transform", "translate(22,-26)");
+    badge.append("circle").attr("r", 10);
+    badge.append("text").attr("dy", "0.35em");
+    return m;
+  }).attr("transform", pinTransform);
+  sel.select(".pl-count text").text(d => d.n);
+  sel.on("click", (e, d) => {
+    e.stopPropagation();
+    if (d.center) { spider = null; drawPins(); return; }
+    if (d.n > 1) { spider = d.key; drawPins(); return; }
+    pinViewer(d.p);
+  });
+}
+function pinViewer(pin) {
+  const back = document.createElement("div");
+  back.className = "mp-back pv-back";
+  const c = countryAt(pin.lon, pin.lat), r = c && regionIn(c.id, pin.lon, pin.lat);
+  back.innerHTML = `<div class="pv" role="dialog" aria-label="Photo">
+    <img alt="" id="pv-img">
+    <div class="pv-bar"><div><b>${c ? flag(c.id) + " " + esc(c.properties.n) : "Photo"}</b><small>${esc([r && r.properties.n, pin.d && fmtDate(pin.d)].filter(Boolean).join(" · "))}</small></div>
+      <button class="btn small" data-pv="move">Déplacer</button><button class="btn small danger" data-pv="del">Retirer</button><button class="icon-btn" data-pv="close" aria-label="Fermer">✕</button></div>
+  </div>`;
+  document.body.append(back);
+  photoURL(pin.ph).then(u => { if (u) $("pv-img").src = u; });
+  const close = () => back.remove();
+  back.onclick = e => { if (e.target === back || e.target.id === "pv-img") close(); };
+  back.querySelector('[data-pv="close"]').onclick = close;
+  back.querySelector('[data-pv="move"]').onclick = () => {
+    close();
+    state.p = state.p.filter(x => x.id !== pin.id); spider = null; drawPins();
+    placing = [pin]; showPlacing();
+  };
+  back.querySelector('[data-pv="del"]').onclick = e => {
+    const b = e.currentTarget;
+    if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer"; return; }
+    state.p = state.p.filter(x => x.id !== pin.id);
+    if (!Object.values(state.j).some(j => j.entries.some(en => en.ph.includes(pin.ph)))) dropPhotos([pin.ph]);
+    save(); close(); drawPins();
+  };
+}
+$("btn-photos").onclick = () => { if (!pinsShown()) { store.set("explora-pins", "on"); drawPins(); } pickPinPhotos(); };
 
 /* ---------- Carte à partager (lien) ---------- */
 // Le lien contient la carte elle-même (pays, régions, couleurs), compressée : pas de compte ni de serveur.
@@ -2341,7 +2523,7 @@ function renderSettings() {
   const t = store.get("explora-theme") || "auto";
   document.querySelectorAll("[data-theme-opt]").forEach(b => b.setAttribute("aria-pressed", b.dataset.themeOpt === t));
   document.querySelectorAll("[data-mapstyle]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mapstyle === (REAL ? "real" : "classic")));
-  document.querySelectorAll("[data-colors]").forEach(b => b.setAttribute("aria-pressed", b.dataset.colors === (store.get("explora-colors") === "gold" ? "gold" : "multi")));
+  $("set-pins").checked = pinsShown();
 }
 document.querySelectorAll("[data-theme-opt]").forEach(b => b.onclick = () => {
   store.set("explora-theme", b.dataset.themeOpt);
@@ -2349,15 +2531,12 @@ document.querySelectorAll("[data-theme-opt]").forEach(b => b.onclick = () => {
   renderSettings();
 });
 applyTheme(store.get("explora-theme") || "auto");
+$("set-pins").onchange = e => { store.set("explora-pins", e.target.checked ? "on" : "off"); drawPins(); };
 // changer de style de carte change la projection : on recharge la page
 document.querySelectorAll("[data-mapstyle]").forEach(b => b.onclick = () => {
   if ((b.dataset.mapstyle === "real") === REAL) return;
   store.set("explora-mapstyle", b.dataset.mapstyle);
   location.reload();
-});
-document.querySelectorAll("[data-colors]").forEach(b => b.onclick = () => {
-  store.set("explora-colors", b.dataset.colors);
-  renderSettings(); update();
 });
 
 $("btn-export").onclick = async () => {
@@ -2392,7 +2571,7 @@ $("import-file").onchange = async e => {
 $("btn-reset").onclick = e => {
   const b = e.currentTarget;
   if (b.dataset.armed) {
-    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {} }; save();
+    state = { c: new Map(), r: new Map(), w: new Map(), u: new Map(), plans: [], k: {}, j: {}, p: [] }; save();
     openTrips.clear(); current = null; selected = null; routePlan = null; editPlan = null;
     update(); svg.call(zoom.transform, homeTransform());
     b.textContent = "Tout effacer"; delete b.dataset.armed; toast("Tous tes voyages ont été effacés."); return;
